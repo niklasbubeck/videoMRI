@@ -67,12 +67,13 @@ trainer:
     clip_grads: 1.0
   
   timestep_sampler:                                            
-    num_sample_steps: 1000                                     # number of timesampling steps for the DM encoding/decoding
+    num_sample_steps: 50                                     # number of timesampling steps for the DM encoding/decoding
     sample: uniform                                            # the way the noise gets sampled 
   
   loss:
-    name: SimpleLoss                                           # what loss to use 
-  
+    seg: mse                                           # dice, mse
+    recon: mse                                          # ssim, mse
+
   optimizer:
     name: Adam
     params:
@@ -89,11 +90,11 @@ trainer:
         max_beta: 0.999
 
 dataset:
-  data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/subjects/"  # datapath 
-  sbj_file: "/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
+  data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
+  sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
-  time_res: 8 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
-  slice_res: gt
+  time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
+  slice_res: 8
   res: 128 # resolution
   fps: 32 # frames per second
   duration: 1 #seconds
@@ -134,8 +135,8 @@ checkpoint:
   path: "./outputs/diffusion"
   batch_size: 4
   cond_scale: 5.
-  log_every_x_it: 100
-  save_every_x_it: 100
+  log_every_x_it: 1000
+  save_every_x_it: 1000
 
 seed: 42
 three_d: True

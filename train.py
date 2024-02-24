@@ -34,7 +34,7 @@ def main():
             config.imagen.timesteps = args.steps
 
     # TODO: instead of giving three d or not, let user choose the network to use
-    interface = DiffusionAutoEncodersInterface(config, mode='train')
+    interface = DiffusionAutoEncodersInterface(config, mode='train', three_d=config.three_d)
 
     interface.train()
 

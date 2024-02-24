@@ -32,9 +32,6 @@ class BaseModel(nn.Module):
         assert sa.shape == seg_sa.shape, "segmentation and short axis image shapes do not match"
         assert sa.shape[-1] == sa.shape[-2] and sa.shape[-1] in [16, 32, 64, 128, 256], "Can only take care of quadratic images"
 
-        if slice_res == "gt":
-            slice_res = sa.shape[2]
-
         # Resize resolution if necessary
         if sa.shape[-1] != res:
             sa = torch.from_numpy(zoom(sa.numpy(), (1, 1, 1 , 1, res/sa.shape[4], res/sa.shape[5]), order=1)).clamp(0, 1)                      # b, c, s, t, h, w 
@@ -43,12 +40,12 @@ class BaseModel(nn.Module):
 
         # Resize the slices and time dimensions
         if mode == "interpolate":
-            sa = torch.from_numpy(zoom(sa.numpy(), (1, 1, slice_res/sa.shape[2], time_res/sa.shape[3], res/sa.shape[4], res/sa.shape[5]))).clamp(0, 1)                      # b, c, s, t, h, w 
-            seg_sa = torch.from_numpy(zoom(seg_sa.numpy(), (1, 1, slice_res/seg_sa.shape[2], time_res/seg_sa.shape[3], res/seg_sa.shape[4], res/seg_sa.shape[5]))).clamp(0, 1)  # b, c, s, t, h, w 
+            sa = torch.from_numpy(zoom(sa.numpy(), (1, 1, 1, 1/time_res, res/sa.shape[4], res/sa.shape[5]))).clamp(0, 1)                      # b, c, s, t, h, w 
+            seg_sa = torch.from_numpy(zoom(seg_sa.numpy(), (1, 1, 1, 1/time_res, res/seg_sa.shape[4], res/seg_sa.shape[5]))).clamp(0, 1)  # b, c, s, t, h, w 
 
         if mode == "fcfs":
-            sa = sa[:, :, 0:slice_res, 0:time_res, ...]
-            seg_sa = seg_sa[:, :, 0:slice_res, 0:time_res, ...]
+            sa = sa[:, :, :, 0::time_res, ...]
+            seg_sa = seg_sa[:, :, :, 0::time_res, ...]
 
         if mode == "uniform": 
             raise NotImplementedError

@@ -4,6 +4,7 @@ import time
 import os 
 import shutil
 from pathlib import Path
+from collections import OrderedDict
 
 from accelerate import Accelerator, DistributedType, DistributedDataParallelKwargs
 
@@ -22,7 +23,7 @@ from .utils import get_torchvision_unnormalize
 
 
 class DiffusionAutoEncodersInterface:
-    def __init__(self, config, mode, ckpt_path=None, three_d=False, split_batches=True):
+    def __init__(self, config, mode, ckpt_path=None, split_batches=True):
         """Setting up config, output directory, model, and dataset.
 
         Args:
@@ -40,7 +41,6 @@ class DiffusionAutoEncodersInterface:
         # Init arguments
         self.mode = mode
         self.config = self._init_config(config)
-        self.three_d = three_d
 
         # Setup logging and output dirs
         self.output_dir = self._init_output_dir()
@@ -79,14 +79,14 @@ class DiffusionAutoEncodersInterface:
         os.makedirs(path, exist_ok = True)
         OmegaConf.save(config, os.path.join(path, "model_config.yaml"))
         os.makedirs(os.path.join(path, "videos"), exist_ok = True)
-        os.makedirs(os.path.join(path, "models", f"stage_{config.stage}"), exist_ok = True)
+        os.makedirs(os.path.join(path, "models"), exist_ok = True)
 
     def _init_output_dir(self):
         output_dir = Path(os.path.join(self.config.checkpoint.path, self.config.checkpoint.exp_name, self.mode))
 
         # Delete previous experiment if requested
         if self.config.resume == 'overwrite':
-            self._delete_folder(os.path.join(output_dir, "models", f"stage_{self.config.stage}"))
+            self._delete_folder(os.path.join(output_dir, "models"))
 
         # create save folder and save the config
         self._create_save_folder(output_dir, self.config)
@@ -142,44 +142,86 @@ class DiffusionAutoEncodersInterface:
         print('Initializing Diffusion Autoencoders...')
         # if self.three_d:
             # build the unets
-        unets = []
-        encoder_infos=[] 
-        unet_infos=[]
-        num_stages = 0
-        for i, (k, v) in enumerate(self.config.encoders.items()):
-            encoder_infos.append(v)
-        for i, (k, v) in enumerate(self.config.unets.items()):
-            unet_infos.append(v)
-            num_stages += 1
-
-        assert len(encoder_infos) == len(unet_infos), "you need to pass the same amount on encoders and unets"
         
-        for i in range(len(encoder_infos)):
-            print(self.config.three_d)
-            if self.config.three_d:
-                unets.append(DiffusionAutoEncoders3D(encoder_infos[i], unet_infos[i], lowres_cond=(i>0)))
-            else: 
-                unets.append(DiffusionAutoEncoders(encoder_infos[i], unet_infos[i], lowres_cond=(i>0)))
-        model = CascadedDiffusionModel(unets=unets, **self.config.cascaded)
+
+
+
+        # --------------------for the cascading scheme -----------------------
+        # unets = []
+        # encoder_infos=[] 
+        # unet_infos=[]
+        # num_stages = 0
+        # for i, (k, v) in enumerate(self.config.encoders.items()):
+        #     encoder_infos.append(v)
+        # for i, (k, v) in enumerate(self.config.unets.items()):
+        #     unet_infos.append(v)
+        #     num_stages += 1
+
+        # assert len(encoder_infos) == len(unet_infos), "you need to pass the same amount on encoders and unets"
+        
+        # for i in range(len(encoder_infos)):
+        #     print(self.config.three_d)
+        #     if self.config.three_d:
+        #         unets.append(DiffusionAutoEncoders3D(encoder_infos[i], unet_infos[i], lowres_cond=(i>0)))
+        #     else: 
+        #         unets.append(DiffusionAutoEncoders(encoder_infos[i], unet_infos[i], lowres_cond=(i>0)))
+        # model = CascadedDiffusionModel(unets=unets, **self.config.cascaded)
         # else:
         #     model = DiffusionAutoEncoders(self.config.encoders.encoder1, self.config.unets.unet1)
-        
+    
+        # # if specifically known as for inference
+        # if self.mode == "test": 
+        #     merged = self._merge_model(only_stage=list(range(0,num_stages)))
+        #     model.load_state_dict(merged['model'])
+        #     return model, None, None, None
+
+        # elif self.mode=="train" and self.config.resume == 'auto' and len(os.listdir(os.path.join(self.output_dir, "models", f"stage_{self.config.stage}"))) > 0:
+        #     checkpoints = sorted(os.listdir(os.path.join(self.output_dir, "models", f"stage_{self.config.stage}")))
+        #     train_days = int(checkpoints[-1].split(".")[1])+1 # format is ckpt.X.pt
+        #     weight_path = os.path.join(self.output_dir, "models", f"stage_{self.config.stage}", checkpoints[-1])
+        #     print(f'Loading Diff-AE checkpoint from: {weight_path}')
+        #     state = self._merge_model(only_stage=[self.config.stage])
+        #     # for k ,v in state['model'].items():
+        #     #     print(k)
+        #     model.load_state_dict(state['model'])
+        #     start_time = time.time() - state['time_elapsed']
+        #     steps = state['steps']
+        # else:
+        #     train_days = 0
+        #     steps = 0
+        #     start_time = time.time()
+        #     print('Training from scratch')
+        # return model, train_days, start_time, steps
+        print("three_d", self.config.three_d)
+        if self.config.three_d:
+            model = DiffusionAutoEncoders3D(self.config.encoders.encoder1, self.config.unets.unet1)
+        else:
+            model = DiffusionAutoEncoders(self.config.encoders.encoder1, self.config.unets.unet1)
 
         # if specifically known as for inference
-        if self.mode == "test": 
-            merged = self._merge_model(only_stage=list(range(0,num_stages)))
-            model.load_state_dict(merged['model'])
-            return model, None, None, None
-
-        elif self.mode=="train" and self.config.resume == 'auto' and len(os.listdir(os.path.join(self.output_dir, "models", f"stage_{self.config.stage}"))) > 0:
-            checkpoints = sorted(os.listdir(os.path.join(self.output_dir, "models", f"stage_{self.config.stage}")))
-            train_days = int(checkpoints[-1].split(".")[1])+1 # format is ckpt.X.pt
-            weight_path = os.path.join(self.output_dir, "models", f"stage_{self.config.stage}", checkpoints[-1])
-            print(f'Loading Diff-AE checkpoint from: {weight_path}')
-            state = self._merge_model(only_stage=[self.config.stage])
-            # for k ,v in state['model'].items():
-            #     print(k)
+        if ckpt_path is not None: 
+            state = torch.load(ckpt_path)
             model.load_state_dict(state['model'])
+            train_days = int(ckpt_path.split(".")[1])+1 # format is ckpt.X.pt
+            start_time = time.time() - state['time_elapsed']
+            return model, train_days, start_time, state["steps"]
+
+        if self.config.resume == 'auto' and len(os.listdir(os.path.join(self.output_dir, "models"))) > 0:
+            checkpoints = sorted(os.listdir(os.path.join(self.output_dir, "models")))
+            print(checkpoints)
+            train_days = int(checkpoints[-1].split(".")[1])+1 # format is ckpt.X.pt
+            weight_path = os.path.join(self.output_dir, "models", checkpoints[-1])
+            print(f'Loading Diff-AE checkpoint from: {weight_path}')
+            try:
+                state = torch.load(weight_path)
+                model.load_state_dict(state['model'])
+            except: # remove "module." from keys (DDP)
+                new_state = {}
+                new_state['model'] = {}
+                for k, v in state['model'].items():
+                    name = k[7:] # remove `module.`
+                    new_state['model'][name] = v
+                model.load_state_dict(new_state['model'])
             start_time = time.time() - state['time_elapsed']
             steps = state['steps']
         else:
@@ -217,10 +259,8 @@ class DiffusionAutoEncodersInterface:
         idxs = list(range(0, len(ds)))
         split_idx = int(len(idxs) * self.config.dataset.train_pct)
 
-        if self.mode == 'train':
-            self.dataset = Subset(ds, idxs[:split_idx])
-        elif self.mode == 'test':
-            self.dataset = Subset(ds, idxs[split_idx:])
+        self.train_dataset = Subset(ds, idxs[:split_idx])
+        self.test_dataset = Subset(ds, idxs[split_idx:])
 
         # elif self.mode == 'clf_train':
         #     image_dataset = get_dataset(name=data_name, split='train', transform=self.transforms)
@@ -241,7 +281,7 @@ class DiffusionAutoEncodersInterface:
             "steps": self.steps
         }
 
-        trainer = Trainer(self.model, self.config, self.output_dir, self.dataset, three_d=self.three_d, **add_data)
+        trainer = Trainer(self.model, self.config, self.output_dir, self.train_dataset, self.test_dataset, **add_data)
         trainer.train(self.config.stage)
 
     @torch.inference_mode()

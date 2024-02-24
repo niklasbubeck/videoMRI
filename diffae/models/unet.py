@@ -702,8 +702,10 @@ class Unet3D(nn.Module):
         self_cond = None,
         cond_drop_prob = 0.,
         ignore_time = False
-    ):
+                ):
         assert x.ndim == 5, 'input to 3d unet must have 5 dimensions (batch, channels, time, height, width)'
+        # if self.seg_dec == False and use_decoder=='seg':
+        #     raise TypeError("Cannot init without seg decoder and then want to use it to predict")
 
         batch_size, frames, device, dtype = x.shape[0], x.shape[2], x.device, x.dtype
 
@@ -931,27 +933,27 @@ class Unet3D(nn.Module):
         x = self.mid_block2(x, t, c, **conv_kwargs)
 
         out_recon = self.decode_recon(x, 
-                                      t, 
-                                      c, 
-                                      hiddens_recon, 
-                                      conv_kwargs, 
-                                      init_conv_residual, 
-                                      lowres_cond_img, 
-                                      num_preceding_frames, 
-                                      num_succeeding_frames, 
-                                      ignore_time)
+                                    t, 
+                                    c, 
+                                    hiddens_recon, 
+                                    conv_kwargs, 
+                                    init_conv_residual, 
+                                    lowres_cond_img, 
+                                    num_preceding_frames, 
+                                    num_succeeding_frames, 
+                                    ignore_time)
         out_seg = None
         if self.seg_dec:
             out_seg = self.decode_seg(x, 
-                                      t, 
-                                      c, 
-                                      hiddens_seg, 
-                                      conv_kwargs, 
-                                      init_conv_residual, 
-                                      lowres_cond_img, 
-                                      num_preceding_frames, 
-                                      num_succeeding_frames, 
-                                      ignore_time)
+                                    t, 
+                                    c, 
+                                    hiddens_seg, 
+                                    conv_kwargs, 
+                                    init_conv_residual, 
+                                    lowres_cond_img, 
+                                    num_preceding_frames, 
+                                    num_succeeding_frames, 
+                                    ignore_time)
 
         # add_skip_connection = lambda x: torch.cat((x, hiddens.pop() * self.skip_connect_scale), dim = 1)
 

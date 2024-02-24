@@ -14,6 +14,12 @@ import re
 from tqdm import tqdm
 import torchvision
 from einops import rearrange
+from typing import Union
+
+MEAN_SAX_LV_VALUE = 222.7909
+MAX_SAX_VALUE = 487.0
+MEAN_4CH_LV_VALUE = 224.8285
+MAX_4CH_LV_VALUE = 473.0
 
 def get_torchvision_transforms(cfg, mode):
     assert mode in {'train', 'test'}
@@ -33,6 +39,12 @@ def get_torchvision_transforms(cfg, mode):
 
     return transforms
 
+def normalize_image_with_mean_lv_value(im: Union[np.ndarray, torch.Tensor], mean_value=MEAN_SAX_LV_VALUE, target_value=0.5) -> Union[np.ndarray, torch.Tensor]:
+    """ Normalize such that LV pool has value of 0.5. Assumes min value is 0.0. """
+    im = im / (mean_value / target_value)
+    im = im.clip(min=0.0, max=1.0)
+    return im
+
 class UKBB(Dataset):
 
     def __init__(self, config, sbj_file=None, transforms=None) -> None:
@@ -43,38 +55,41 @@ class UKBB(Dataset):
         self.target_resolution = config.dataset.get("res", 256)
         self.root_dir = config.dataset.get("data_path", 256)
         self.transforms = transforms
+        self.slice_res = config.dataset.get("slice_res", 8)
 
 
-        self.sa_fnames = []
-        self.la_fnames =[]
-        self.seg_fnames = []
+        self.fnames = []
+        # self.la_fnames =[]
+        # self.seg_fnames = []
         # self.meta_fnames = []
-        subjects = ["**"]
-        if sbj_file:
+        subjects = os.listdir(self.root_dir)
+        if sbj_file is not None:
             subjects = self.read_subject_numbers(sbj_file)
 
         for subject in tqdm(subjects):
+            if len(self.fnames) >= 5000:
+                break
             try:
-                    self.sa_fnames += glob.glob(f'{self.root_dir}/{subject}/sa_cropped.nii.gz', recursive=True) 
-                    self.la_fnames += glob.glob(f'{self.root_dir}/{subject}/la_2ch.nii.gz', recursive=True) 
-                    self.seg_fnames += glob.glob(f'{self.root_dir}/{subject}/seg_sa_cropped.nii.gz', recursive=True)
+                self.fnames += glob.glob(f'{self.root_dir}/{subject}/processed_seg_allax.npz', recursive=True) 
+                # self.la_fnames += glob.glob(f'{self.root_dir}/{subject}/la_2ch.nii.gz', recursive=True) 
+                # self.seg_fnames += glob.glob(f'{self.root_dir}/{subject}/seg_sa_cropped.nii.gz', recursive=True)
             except:
                 ImportError('No data found in the given path')
 
         # some subjects dont have both, check for edge cases 
-        sa_subjects = [self.extract_seven_concurrent_numbers(file) for file in self.sa_fnames]
-        la_subjects = [self.extract_seven_concurrent_numbers(file) for file in self.la_fnames]
-        seg_subjects = [self.extract_seven_concurrent_numbers(file) for file in self.seg_fnames]  
-        common_subjects = self.common_subjects(la_subjects, sa_subjects)
-        common_subjects = self.common_subjects(common_subjects, seg_subjects)
-        self.sa_fnames = [f'{self.root_dir}/{subject}/sa_cropped.nii.gz' for subject in common_subjects]
-        self.la_fnames = [f'{self.root_dir}/{subject}/la_2ch.nii.gz' for subject in common_subjects]
-        self.seg_fnames = [f'{self.root_dir}/{subject}/seg_sa_cropped.nii.gz' for subject in common_subjects]
+        # sa_subjects = [self.extract_seven_concurrent_numbers(file) for file in self.sa_fnames]
+        # la_subjects = [self.extract_seven_concurrent_numbers(file) for file in self.la_fnames]
+        # seg_subjects = [self.extract_seven_concurrent_numbers(file) for file in self.seg_fnames]  
+        # common_subjects = self.common_subjects(la_subjects, sa_subjects)
+        # common_subjects = self.common_subjects(common_subjects, seg_subjects)
+        # self.sa_fnames = [f'{self.root_dir}/{subject}/sa_cropped.nii.gz' for subject in common_subjects]
+        # self.la_fnames = [f'{self.root_dir}/{subject}/la_2ch.nii.gz' for subject in common_subjects]
+        # self.seg_fnames = [f'{self.root_dir}/{subject}/seg_sa_cropped.nii.gz' for subject in common_subjects]
 
-        print(f'{len(self.sa_fnames)} files found in {self.root_dir}')
+        print(f'{len(self.fnames)} files found in {self.root_dir}')
         # print(f'{len(self.la_fnames)} files found in {self.root_dir}/{folder}')
-        assert len(self.sa_fnames) == len(self.la_fnames) == len(self.seg_fnames), f"number of sa {len(self.sa_fnames)} and la {len(self.la_fnames)} and seg {len(self.seg_fnames)} not equal"
-        assert len(self.sa_fnames) != 0, f"Given directory contains 0 images. Please check on the given root: {self.root_dir}"
+        # assert len(self.sa_fnames) == len(self.la_fnames) == len(self.seg_fnames), f"number of sa {len(self.sa_fnames)} and la {len(self.la_fnames)} and seg {len(self.seg_fnames)} not equal"
+        # assert len(self.sa_fnames) != 0, f"Given directory contains 0 images. Please check on the given root: {self.root_dir}"
 
 
     def extract_seven_concurrent_numbers(self, text):
@@ -116,9 +131,9 @@ class UKBB(Dataset):
     def indices(self, value):
         self._indices = value 
 
-    @property
-    def fnames(self):
-        return self.targets_fnames
+    # @property
+    # def fnames(self):
+    #     return self.targets_fnames
 
     
     def load_nifti(self, fname:str):
@@ -147,36 +162,44 @@ class UKBB(Dataset):
         return x 
 
     def __len__(self):
-        return len(self.sa_fnames)
+        return len(self.fnames)
 
     def __getitem__(self, idx):
         
-        # load the short axis-image
-        sa = self.load_nifti(self.sa_fnames[idx]) # h, w, s, t
-        sa = self.min_max(sa, 0, 1) 
+        process_npy = np.load(self.fnames[idx])
+        sa = process_npy['sax'] # [H, W, S, T]
+        la = process_npy['lax'] # [H, W, S, T]
+        sa_seg = process_npy['seg_sax'] # [H, W, S, T]
+       
+        sa = normalize_image_with_mean_lv_value(sa)
+        la = normalize_image_with_mean_lv_value(la)
+       
+        # # load the short axis-image
+        # sa = self.load_nifti(self.sa_fnames[idx]) # h, w, s, t
+        # sa = self.min_max(sa, 0, 1) 
 
-        # load the segmentation short-axis image
-        sa_seg = self.load_nifti(self.seg_fnames[idx]) #h ,w, s, t 
+        # # load the segmentation short-axis image
+        # sa_seg = self.load_nifti(self.seg_fnames[idx]) #h ,w, s, t 
 
 
-        # load the long-axis image 
-        la = self.load_nifti(self.la_fnames[idx]) # h, w, s, t
-        la = self.min_max(la, 0, 1)
+        # # load the long-axis image 
+        # la = self.load_nifti(self.la_fnames[idx]) # h, w, s, t
+        # la = self.min_max(la, 0, 1)
     
-        la_o_h, la_o_w, la_o_s, la_o_t = la.shape
+        # la_o_h, la_o_w, la_o_s, la_o_t = la.shape
 
-        # crop la image 
-        left = (la_o_w - self.target_resolution) // 2
-        top = (la_o_h - self.target_resolution) // 2
-        right = left + self.target_resolution
-        bottom = top + self.target_resolution
-        la = la[top:bottom, left:right, 0, 0]
+        # # crop la image 
+        # left = (la_o_w - self.target_resolution) // 2
+        # top = (la_o_h - self.target_resolution) // 2
+        # right = left + self.target_resolution
+        # bottom = top + self.target_resolution
+        # la = la[top:bottom, left:right, 0, 0]
 
-        # error handling for la images smaller than 128
-        la_h, la_w = la.shape
-        if la_h != self.target_resolution or la_w != self.target_resolution:
-            print(f"Weird stuff: {la_o_h} {la_o_w} --> {la_h} {la_w}")
-            return self.__getitem__(idx + 1)
+        # # error handling for la images smaller than 128
+        # la_h, la_w = la.shape
+        # if la_h != self.target_resolution or la_w != self.target_resolution:
+        #     print(f"Weird stuff: {la_o_h} {la_o_w} --> {la_h} {la_w}")
+        #     return self.__getitem__(idx + 1)
     
         # add channel dimension and float it 
         sa = torch.from_numpy(sa).unsqueeze(0).type(torch.float)         # c, h ,w ,s ,t 
@@ -185,7 +208,7 @@ class UKBB(Dataset):
         
         # rearrange
         sa = rearrange(sa, "c h w s t -> c s t h w")
-        la = rearrange(la, "c h w -> c h w")
+        la = rearrange(la, "c h w s t -> c s t h w")
         sa_seg = rearrange(sa_seg, "c h w s t -> c s t h w")
         
         # apply transformations
@@ -193,11 +216,17 @@ class UKBB(Dataset):
         la = self.transforms(la)
         sa_seg = self.transforms(sa_seg)
 
-        # return dict with each filename 
-        fnames = dict(
-            sa = self.sa_fnames[idx],
-            la = self.la_fnames[idx],
-            sa_seg = self.seg_fnames[idx]
-        )
+        if self.slice_res is not None: 
+            start_slice = (sa.shape[1] - self.slice_res) // 2
+            end_slice = start_slice + 8
 
+            sa = sa[:, start_slice:end_slice, ...]
+            sa_seg = sa_seg[:, start_slice:end_slice, ...]
+        # return dict with each filename 
+        # fnames = dict(
+        #     sa = self.sa_fnames[idx],
+        #     la = self.la_fnames[idx],
+        #     sa_seg = self.seg_fnames[idx]
+        # )
+        fnames = self.fnames[idx]
         return sa, la, sa_seg, fnames
