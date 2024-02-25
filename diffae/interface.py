@@ -291,7 +291,7 @@ class DiffusionAutoEncodersInterface:
         assert self.mode == 'test'
 
         print('Evaluation start...')
-        result = self.sampler.sample_testdata(self.dataset)
+        result = self.sampler.sample_testdata(self.test_dataset)
         with (self.output_dir / 'test.json').open('w') as fp:
             json.dump(result, fp, indent=4, sort_keys=True)
 
@@ -302,7 +302,7 @@ class DiffusionAutoEncodersInterface:
         assert self.mode == 'test'
 
         print('Evaluation start...')
-        result = self.sampler.sample_interpolated_testdata(self.dataset)
+        result = self.sampler.sample_interpolated_testdata(self.test_dataset)
         with (self.output_dir / 'test.json').open('w') as fp:
             json.dump(result, fp, indent=4, sort_keys=True)
 

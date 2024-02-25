@@ -692,7 +692,7 @@ class Sampler:
             for i in range(batch_size):
                 ref = x0[i,0,...].cpu().numpy()
                 sample = xt[i,0,...].cpu().numpy()
-                subject = extract_seven_concurrent_numbers(fnames['sa'][i])[0]
+                subject = extract_seven_concurrent_numbers(fnames)[0]
                 mse, psnr, ssim = calculate_metrics(ref, sample, keys[2:])
                 results = [subject, slice_nr, mse, psnr, ssim]
                 print(results)

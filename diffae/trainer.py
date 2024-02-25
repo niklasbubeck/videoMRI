@@ -245,19 +245,25 @@ class Trainer(torch.nn.Module):
                     #     lowres = torch.sqrt(alpha_t) * lowres + torch.sqrt(1.0 - alpha_t) * noise_low
 
                     out_recon, out_seg = self.unet_being_trained(sa, xt, t.float())
+                    alpha_t = self.alphas_cumprod[t].view(*view)
 
-                    pred_recon = xt - out_recon
-                    pred_seg = xt - out_seg
+                    pred_recon = (xt - torch.sqrt(1.0 - alpha_t) * out_recon) / torch.sqrt(alpha_t)
+                    
+                    if out_seg is not None:
+                        pred_seg = (xt - torch.sqrt(1.0 - alpha_t) * out_seg) / torch.sqrt(alpha_t)
 
                     if self.is_main and self.iter % 100 == 0:
                         vid_recon = torch.cat([sa, pred_recon], dim=-2)
-                        vid_seg = torch.cat([sa_seg, pred_seg], dim=-2)
                         self._videos_to_wandb(vid_recon, 'recon')
-                        self._videos_to_wandb(vid_seg, "seg")
+                        if out_seg is not None:
+                            vid_seg = torch.cat([sa_seg, pred_seg], dim=-2)
+                            self._videos_to_wandb(vid_seg, "seg")
 
                     loss_recon = self.criterion_recon(pred_recon, sa)
-                    loss_seg = self.criterion_seg(pred_seg, sa_seg)
-                    loss = loss_recon + loss_seg
+                    
+                    if out_seg is not None:
+                        loss_seg = self.criterion_seg(pred_seg, sa_seg)
+                    loss = loss_recon + loss_seg if out_seg is not None else loss_recon
 
                 if self.is_main: self._one_line_log(steps, loss_recon, loss_seg, len(self.train_loader), self.start_time)
                 self.accelerator.backward(loss)

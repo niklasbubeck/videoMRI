@@ -35,7 +35,7 @@ def main():
 
 
     interface = DiffusionAutoEncodersInterface(config, mode='test')
-    interface.test_interpolation()
+    # interface.test_interpolation()
     interface.test_reconstruction()
 
 

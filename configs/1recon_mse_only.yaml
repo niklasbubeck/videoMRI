@@ -11,7 +11,7 @@ unets:
     channels: 1                                               # number of input channels that get trained on 
     channels_out: 1                                           # number of output channels that get trained on 
     cond_on_text: True  # for the style embeds                 # if conditioned on text 
-    seg_dec: True
+    seg_dec: False
 
   unet2: # TSR
     dim: 32                                                  # Base dimension of the unet
@@ -26,7 +26,7 @@ unets:
     channels_out: 1                                           # number of output channels that get trained on 
     cond_on_text: True  # for the style embeds  
     lowres_cond: True
-    seg_dec: True
+    seg_dec: False
 
 encoders: 
   encoder1:
