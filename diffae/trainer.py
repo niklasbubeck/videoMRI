@@ -10,13 +10,16 @@ import numpy as np
 import random as rand
 from accelerate import Accelerator, DistributedType, DistributedDataParallelKwargs
 from omegaconf import OmegaConf
+import torch.nn.functional as F
+
 
 from .sampler import Sampler
 from .models.network_helpers import resize_video_to
 from .models.model import CascadedDiffusionModel
-from .models.loss import SimpleLoss, DiceLoss, SSIMLoss
+from .models.loss import SimpleLoss, DiceLoss, SSIMLoss, VideoSSIMLoss, SegmentationCriterion
 from .utils import Meter, TimestepSampler, get_betas, seed_everything, training_reproducibility_cudnn, vid_to_wandb, calculate_metrics
 from .sampler import Sampler
+from .models.network_helpers import unnormalize_zero_to_one, normalize_neg_one_to_one
 
 class Trainer(torch.nn.Module):
     def __init__(self, model, config, output_dir, train_dataset, test_dataset, split_batches=True, **kwargs):
@@ -70,8 +73,8 @@ class Trainer(torch.nn.Module):
             self.print(f"Load Optimizer state dict for stage {self.config.stage}")
             self.optimizer.load_state_dict(self.optim_state)
 
-        self.criterion_recon = SimpleLoss() if self.config.trainer.loss.recon == "mse" else SSIMLoss()
-        self.criterion_seg = SimpleLoss() if self.config.trainer.loss.seg == "mse" else DiceLoss()
+        self.criterion_recon = SimpleLoss() if self.config.trainer.loss.recon == "mse" else VideoSSIMLoss()
+        self.criterion_seg = SimpleLoss() if self.config.trainer.loss.seg == "mse" else SegmentationCriterion(type="dice")
 
         self.fp16 = config.trainer.fp16
         self.grad_accum_steps = config.trainer.grad_accum_steps
@@ -158,10 +161,10 @@ class Trainer(torch.nn.Module):
         else:
             return True
 
-    def print(self, msg):
+    def print(self, msg, **kwargs):
         if not self.is_main:
             return
-        return self.accelerator.print(msg)
+        return self.accelerator.print(msg, **kwargs)
 
     def _sample_noise(self, input, view):
         # sample the noise 
@@ -180,9 +183,9 @@ class Trainer(torch.nn.Module):
         s_epoch = f'Epoch: {(cur_step//batch_per_epoch):<4.0f}'
         s_mvid = f'Mvid: {(cur_step*self.config.bs/1e6):<6.4f}'
         s_delay = f'Elapsed time: {self._delay2str(time.time() - start_time):<10}'
-        print(f'{s_step} | {s_loss} {s_epoch} {s_mvid} | {s_delay}', end='\r') # type: ignore
+        self.print(f'{s_step} | {s_loss} {s_epoch} {s_mvid} | {s_delay}', end='\r') # type: ignore
         if cur_step % 1000 == 0:
-            print() # Start new line every 1000 steps
+            self.print("\n") # Start new line every 1000 steps
         
         wandb.log({
             "loss" if not validation else "val_loss" : loss_recon + loss_seg, 
@@ -234,23 +237,16 @@ class Trainer(torch.nn.Module):
                     view[0] = -1
 
                     xt, t, noise_img = self._sample_noise(sa, view)
-                    # xt_seg, t_seg, noise_img_seg = self._sample_noise(sa_seg, view)
-
-                    # t_low = None
-                    # if lowres is not None: 
-                    #     # augment the lowres image too 
-                    #     t_low= self.timestep_sampler.sample(batch_size)
-                    #     noise_low = torch.randn_like(lowres, device=self.device)
-                    #     alpha_t = self.alphas_cumprod[t_low].view(*view)
-                    #     lowres = torch.sqrt(alpha_t) * lowres + torch.sqrt(1.0 - alpha_t) * noise_low
+                    # xt = torch.sqrt(alpha_t) * input + torch.sqrt(1.0 - alpha_t) * noise_img
 
                     out_recon, out_seg = self.unet_being_trained(sa, xt, t.float())
-                    alpha_t = self.alphas_cumprod[t].view(*view)
-
-                    pred_recon = (xt - torch.sqrt(1.0 - alpha_t) * out_recon) / torch.sqrt(alpha_t)
                     
+                    pred_recon = (xt - out_recon * torch.sqrt(1-self.alphas_cumprod[t].view(*view))) / torch.sqrt(self.alphas_cumprod[t].view(*view))
+
                     if out_seg is not None:
-                        pred_seg = (xt - torch.sqrt(1.0 - alpha_t) * out_seg) / torch.sqrt(alpha_t)
+                        pred_seg = (xt - out_seg * torch.sqrt(1-self.alphas_cumprod[t].view(*view))) / torch.sqrt(self.alphas_cumprod[t].view(*view))
+                        pred_seg = F.softmax(pred_seg, dim=1)
+                        pred_seg = torch.argmax(pred_seg, dim=1)
 
                     if self.is_main and self.iter % 100 == 0:
                         vid_recon = torch.cat([sa, pred_recon], dim=-2)
@@ -261,6 +257,7 @@ class Trainer(torch.nn.Module):
 
                     loss_recon = self.criterion_recon(pred_recon, sa)
                     
+                    loss_seg = 0
                     if out_seg is not None:
                         loss_seg = self.criterion_seg(pred_seg, sa_seg)
                     loss = loss_recon + loss_seg if out_seg is not None else loss_recon
@@ -284,10 +281,9 @@ class Trainer(torch.nn.Module):
                             if iter >=1:
                                 break
                             for n in [5]:
-                                subject, gt, sample, slice_nr1 = self.sampler.sample_interpolated_testdata_batch(batch, metrics=metrics, slice_nr=n)
+                                subject, gt, sample, seg, slice_nr1 = self.sampler.sample_interpolated_testdata_batch(batch, metrics=metrics, slice_nr=n)
                                 gts.append(gt)
                                 samples.append(sample)
-
                                 ref = gt[0,0,...].cpu().numpy()
                                 sample = sample[0,0,...].cpu().numpy()
 
@@ -326,7 +322,7 @@ class Trainer(torch.nn.Module):
                             if iter >=1:
                                 break 
                             for n in [5]:
-                                fnames, gt, sample, slice_nr = self.sampler.sample_testdata_batch(batch, slice_nr=n)
+                                fnames, gt, sample, seg, slice_nr = self.sampler.sample_testdata_batch(batch, slice_nr=n)
                                 gts.append(gt)
                                 samples.append(sample)
                                 ref = gt[0,0,...].cpu().numpy()

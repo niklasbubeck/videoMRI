@@ -2,6 +2,8 @@ import torch.nn as nn
 import torch
 from monai.losses import DiceLoss
 import torch.nn.functional as F
+from monai.networks.utils import one_hot
+
 
 class SimpleLoss(nn.Module):
     def __init__(self):
@@ -25,6 +27,20 @@ class SimpleLoss(nn.Module):
         loss = (noises - outputs).square().mean()
         return loss
 
+
+class VideoSSIMLoss(torch.nn.Module):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.ssim_loss = SSIMLoss()
+
+    def forward(self, pred, target, dim=2, reduced=True, as_loss=True):
+        assert pred.shape == target.shape, "given shapes of ssim are not equal"
+
+        vid_loss = []
+        for i in range(pred.shape[dim]):
+            vid_loss.append(self.ssim_loss(pred[:,0,i,...], target[:,0,i,...], reduced=reduced, as_loss=as_loss)) # b, h ,w 
+
+        return sum(vid_loss) / len(vid_loss)
 
 class SSIMLoss(torch.nn.Module):
     """
@@ -96,15 +112,21 @@ class DiceCriterion(torch.nn.Module):
 
 
 class SegmentationCriterion(torch.nn.Module):
-    def __init__(self, type, loss_weights=None):
+    def __init__(self, type, loss_weights=None, include_background=False):
         super().__init__()
         
         if type == 'dice':
-            self.loss_fct = DiceLoss(reduction='none')
+            self.loss_fct = DiceLoss(reduction='none', include_background=include_background)
         else:
             raise NotImplementedError(f'Loss function {type} is not implemented for segmentation')
     
-    def forward(self, pred, target, mask=None):
+    def forward(self, pred, target, mask=None, one_hot_enc=True, num_classes=None):
+        assert one_hot_enc ==True and num_classes != None, "when using one hot, you have to specify the number of classes to encode"
+        assert pred.shape == target.shape, f"shapes of pred and target do not match with {pred.shape} {target.shape}"
+        if one_hot_enc:
+            print(pred.unique(), num_classes, target.unique())
+            target = one_hot(target, num_classes=num_classes)
+            pred = one_hot(pred, num_classes=num_classes)
         mask = torch.ones_like(pred, dtype=torch.int32)
         mask[:, :, 1, ...] = 0
         mask_ = mask.view(*mask.shape[:2], -1)

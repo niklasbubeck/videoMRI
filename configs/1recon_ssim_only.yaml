@@ -47,7 +47,7 @@ trainer:
   
   loss:
     seg: mse                                           # dice, mse
-    recon: mse                                          # ssim, mse
+    recon: ssim                                          # ssim, mse
 
   optimizer:
     name: Adam

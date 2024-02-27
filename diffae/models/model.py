@@ -24,6 +24,7 @@ class BaseModel(nn.Module):
                     slice_idx,
                     time_idx=None, 
                     mode="fcfs",
+                    normalize=False,
                     **kwargs):
         
         sa, la, seg_sa, fnames = batch
@@ -59,8 +60,15 @@ class BaseModel(nn.Module):
             sa = sa[:, :, time_idx, ...]            # b, c, h ,w
             seg_sa = seg_sa[:, :, time_idx, ...]    # b, c, h ,w 
 
-        cond_frames = [ sa[:, :, slice, time_idx, ...] for slice in cond_slices]
-        cond_frames = torch.cat(cond_frames, dim=1)
+        cond_frames = None
+        # cond_frames = [ sa[:, :, slice, time_idx, ...] for slice in cond_slices]
+        # cond_frames = torch.cat(cond_frames, dim=1)
+
+        if normalize:
+            sa = normalize_neg_one_to_one(sa)
+            cond_frames = normalize_neg_one_to_one(cond_frames)
+            la = normalize_neg_one_to_one(la)
+            
 
         return sa, la, seg_sa, cond_frames, fnames
 
@@ -278,6 +286,7 @@ class DiffusionAutoEncoders3D(BaseModel):
         super().__init__()
         self.lowres_cond = lowres_cond
         self.encoder = SemanticEncoder3D(**enc_config)
+        print(unet_config)
         self.unet = Unet3D(**unet_config)
 
     def forward(self, x0, xt, t, lowres_cond_img=None, lowres_noise_times=None):

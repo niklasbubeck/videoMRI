@@ -170,7 +170,7 @@ class UKBB(Dataset):
         sa = process_npy['sax'] # [H, W, S, T]
         la = process_npy['lax'] # [H, W, S, T]
         sa_seg = process_npy['seg_sax'] # [H, W, S, T]
-       
+
         sa = normalize_image_with_mean_lv_value(sa)
         la = normalize_image_with_mean_lv_value(la)
        

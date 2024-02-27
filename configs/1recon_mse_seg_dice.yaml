@@ -9,9 +9,10 @@ unets:
     layer_cross_attns: [False, False, True]                   # activating layer crossattention for each stage
     cond_images_channels: 0                                   # number of conditional input channels
     channels: 1                                               # number of input channels that get trained on 
-    channels_out: 1                                           # number of output channels that get trained on 
+    channels_out: 1   
+    seg_channels_out: 4                                        # number of classes for segmentation
     cond_on_text: True  # for the style embeds                 # if conditioned on text 
-    seg_dec: False
+    seg_dec: True
 
 encoders: 
   encoder1:
@@ -46,8 +47,9 @@ trainer:
     sample: uniform                                            # the way the noise gets sampled 
   
   loss:
-    seg: mse                                           # dice, mse
-    recon: mse                                          # ssim, mse
+    seg: dice                                           # dice, mse
+    recon: mse 
+    weight: 5                                         # ssim, mse
 
   optimizer:
     name: Adam
@@ -115,3 +117,4 @@ checkpoint:
 
 seed: 42
 three_d: True
+num_classes: 4

@@ -218,7 +218,8 @@ class Unet3D(nn.Module):
         temporal_strides = 1,
         cond_images_channels = 0,
         channels = 3,
-        channels_out = None,
+        channels_out = 3,
+        seg_channels_out=4,
         attn_dim_head = 64,
         attn_heads = 8,
         ff_mult = 2.,
@@ -517,11 +518,13 @@ class Unet3D(nn.Module):
                                         resnet_groups, 
                                         final_resnet_block, 
                                         channels, 
+                                        channels_out,
                                         lowres_cond, 
                                         final_conv_kernel_size,
                                         use_global_context_attn,
                                         ff_time_token_shift,
-                                        skip_connect_scale=self.skip_connect_scale
+                                        skip_connect_scale=self.skip_connect_scale,
+                                        recon=True
                                         )
         if seg_dec:
             self.decode_seg = UnetDecoder(dim, 
@@ -543,11 +546,13 @@ class Unet3D(nn.Module):
                                             resnet_groups, 
                                             final_resnet_block, 
                                             channels, 
+                                            seg_channels_out,
                                             lowres_cond, 
                                             final_conv_kernel_size,
                                             use_global_context_attn,
                                             ff_time_token_shift,
-                                            skip_connect_scale=self.skip_connect_scale
+                                            skip_connect_scale=self.skip_connect_scale,
+                                            recon=False
                                             )
 
         # # upsample klass
@@ -954,7 +959,7 @@ class Unet3D(nn.Module):
                                     num_preceding_frames, 
                                     num_succeeding_frames, 
                                     ignore_time)
-
+    
         # add_skip_connection = lambda x: torch.cat((x, hiddens.pop() * self.skip_connect_scale), dim = 1)
 
         # up_hiddens = []
@@ -1027,11 +1032,13 @@ class UnetDecoder(nn.Module):
                  resnet_groups = 8,
                  final_resnet_block = True,
                  channels=3,
+                 channels_out=3,
                  lowres_cond = False, 
                  final_conv_kernel_size = 3,
                  use_global_context_attn = True,
                  ff_time_token_shift = True,
-                 skip_connect_scale=1.
+                 skip_connect_scale=1.,
+                 recon=True,
                  ) -> None:
         super().__init__()
         self.ups = nn.ModuleList([])
@@ -1039,7 +1046,7 @@ class UnetDecoder(nn.Module):
         # upsample klass
 
         upsample_klass = UpsamplePseudo3D if not pixel_shuffle_upsample else PixelShuffleUpsample
-        self.channels_out = channels
+        self.channels_out = channels_out
         # upsampling layers
 
         upsample_fmap_dims = []
@@ -1088,7 +1095,8 @@ class UnetDecoder(nn.Module):
         final_conv_dim_in += (channels if lowres_cond else 0)
 
         self.final_conv = Conv2d(final_conv_dim_in, self.channels_out, final_conv_kernel_size, padding = final_conv_kernel_size // 2)
-        zero_init_(self.final_conv)
+        if recon:
+            zero_init_(self.final_conv)
 
     def forward(self, 
                 x, 
