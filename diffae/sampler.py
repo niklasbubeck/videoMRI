@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import os 
 import sys 
+from einops import rearrange
 from PIL import Image
 from matplotlib import pyplot as plt
 
@@ -594,12 +595,34 @@ class Sampler:
 
         return xt
     
+    def equation_twelve(self, xt, e, _t, alphas_shape, dim, eta=0.0):
+         # Equation 12 of Denoising Diffusion Implicit Models
+        x0_t = (
+            torch.sqrt(1.0 / self.alphas_cumprod[_t]).view(*alphas_shape + (1,) *dim) * xt
+            - torch.sqrt(1.0 / self.alphas_cumprod[_t] - 1).view(*alphas_shape + (1,) *dim) * e
+        ).clamp(-1, 1)
+        e = (
+            (torch.sqrt(1.0 / self.alphas_cumprod[_t]).view(*alphas_shape + (1,) *dim) * xt - x0_t)
+            / (torch.sqrt(1.0 / self.alphas_cumprod[_t] - 1).view(*alphas_shape + (1,) *dim))
+        )
+        sigma = (
+            eta
+            * torch.sqrt((1 - self.alphas_cumprod_prev[_t]) / (1 - self.alphas_cumprod[_t]))
+            / torch.sqrt((1 - self.alphas_cumprod[_t]) / self.alphas_cumprod_prev[_t])
+        )
+        xt = (
+            torch.sqrt(self.alphas_cumprod_prev[_t]).view(*alphas_shape + (1,) *dim) * x0_t
+            + torch.sqrt(1 - self.alphas_cumprod_prev[_t] - sigma**2).view(*alphas_shape + (1,) *dim) * e
+        )
+        xt = xt + torch.randn_like(xt) * sigma.view(*alphas_shape + (1,) *dim) if _t != 0 else xt
+        return xt
+
     def sample_interpolated_testdata_batch(self, batch, eta=0.0, metrics=["mse", "psnr", "ssim"], slice_nr='rand'):
         if slice_nr == "rand":
             slice_nr = np.random.randint(1 , batch[0].shape[2]-1)
         prev, next = slice_nr - 1, slice_nr + 1
         x0_prev, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=prev)
-        x0_inter, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=slice_nr)
+        x0_inter, _, seg_sa, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=slice_nr)
         x0_next, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=next)
 
         x0_prev = x0_prev.to(self.device)
@@ -618,7 +641,7 @@ class Sampler:
         #     inter_seg = inter_seg.unsqueeze(0)
 
         subject = extract_seven_concurrent_numbers(fnames[0])[0]
-        return subject, x0_inter, inter_recon, inter_seg, slice_nr
+        return subject, x0_inter, inter_recon, seg_sa, inter_seg, slice_nr
 
     def sample_interpolated_testdata(self, test_dataset, metrics=["mse", "psnr", "ssim"], **kwargs):
         """Autoencode test data and calculate evaluation metrics.
@@ -656,7 +679,7 @@ class Sampler:
     def sample_testdata_batch(self, batch, eta=0.0, slice_nr="rand"):
         if slice_nr == "rand":
             slice_nr = np.random.randint(0 , batch[0].shape[2])
-        x0, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=slice_nr)
+        x0, _, seg_sa, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=slice_nr)
 
         x0 = x0.to(self.device)
         batch_size = x0.shape[0]
@@ -667,6 +690,12 @@ class Sampler:
             dim = 4
 
         xt = self.encode_stochastic(x0, disable_tqdm=False)
+        # xt = torch.randn_like(xt)
+
+        # videos = rearrange(xt.detach().cpu(), 'b c t h w -> t h (b w) c') # type: ignore
+        # videos = (videos*255).numpy().astype(np.uint8)
+        # videos = [Image.fromarray(i[...,0]) for i in videos]
+        # videos[0].save(os.path.join(f"sample-xt_noisemap.gif"), save_all=True, append_images=videos[1:], duration=1000/10, loop=0)
 
         style_emb = self.model.encoder(x0)
 
@@ -677,14 +706,24 @@ class Sampler:
             e_recon, e_seg = self.model.unet(xt, t, text_embeds=style_emb)
             alphas_shape = self.alphas_cumprod[_t].shape
 
-            xt_recon = self.ddim_sampler(xt, e_recon, _t, alphas_shape, dim)
+            xt_recon = self.equation_twelve(xt, e_recon, _t, alphas_shape, dim)
+            
+            # if _t % 20 == 5:
+            #     videos = rearrange(xt_recon.detach().cpu(), 'b c t h w -> t h (b w) c') # type: ignore
+            #     videos = (videos*255).numpy().astype(np.uint8)
+            #     videos = [Image.fromarray(i[...,0]) for i in videos]
+            #     videos[0].save(os.path.join(f"sample-{str(_t).zfill(10)}.gif"), save_all=True, append_images=videos[1:], duration=1000/10, loop=0)
 
             xt_seg = None
             if e_seg is not None: 
-                xt_seg = self.ddim_sampler(xt, e_seg, _t, alphas_shape, dim)
+                xt_seg = self.equation_twelve(xt, e_seg, _t, alphas_shape, dim)
 
             xt = xt_recon
-        return fnames, x0, xt, xt_seg, slice_nr
+            # videos = rearrange(xt.detach().cpu(), 'b c t h w -> t h (b w) c') # type: ignore
+            # videos = (videos*255).numpy().astype(np.uint8)
+            # videos = [Image.fromarray(i[...,0]) for i in videos]
+            # videos[0].save(os.path.join(f"sample-final.gif"), save_all=True, append_images=videos[1:], duration=1000/10, loop=0)
+        return fnames, x0, xt, seg_sa, xt_seg, slice_nr
 
 
     def sample_testdata(self, test_dataset, eta=0.0):
@@ -698,14 +737,15 @@ class Sampler:
 
         self.model.eval()
         for iter, batch in tqdm(enumerate(test_loader), total=len(test_loader)):
-            fnames, x0, xt, slice_nr, seg = self.sample_interpolated_testdata_batch(batch)
+            fnames, x0, xt, slice_nr, seg = self.sample_testdata_batch(batch)
 
             batch_size = xt.shape[0]
 
             for i in range(batch_size):
                 ref = x0[i,0,...].cpu().numpy()
                 sample = xt[i,0,...].cpu().numpy()
-                subject = extract_seven_concurrent_numbers(fnames)[0]
+                print(fnames)
+                subject = extract_seven_concurrent_numbers(fnames[i])[0]
                 mse, psnr, ssim = calculate_metrics(ref, sample, keys[2:])
                 results = [subject, slice_nr, mse, psnr, ssim]
                 print(results)
@@ -750,7 +790,7 @@ class Sampler:
             e_recon, e_seg = self.model.unet(xt, t, style_emb)
             alphas_shape = self.alphas_cumprod[t].shape
 
-            xt, x0_t = self.ddim_sampler(xt, e_recon, _t, alphas_shape, dim)
+            xt, x0_t = self.equation_twelve(xt, e_recon, _t, alphas_shape, dim)
 
             x0_preds.append(x0_t[0])
             xt_preds.append(xt[0])
@@ -835,11 +875,11 @@ class Sampler:
             e_recon, e_seg = self.model.unet(xt, t, text_embeds=style_emb)
             alphas_shape = self.alphas_cumprod[_t].shape
 
-            xt_recon = self.ddim_sampler(xt, e_recon, _t, alphas_shape, dim)
+            xt_recon = self.equation_twelve(xt, e_recon, _t, alphas_shape, dim)
 
             xt_seg = None
             if e_seg is not None:
-                xt_seg = self.ddim_sampler(xt, e_seg, _t, alphas_shape, dim)
+                xt_seg = self.equation_twelve(xt, e_seg, _t, alphas_shape, dim)
 
             xt_preds_recon.append(xt_recon)
             xt_preds_seg.append(xt_seg)

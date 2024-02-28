@@ -9,10 +9,10 @@ unets:
     layer_cross_attns: [False, False, True]                   # activating layer crossattention for each stage
     cond_images_channels: 0                                   # number of conditional input channels
     channels: 1                                               # number of input channels that get trained on 
-    channels_out: 1 
-    seg_channels_out: 4                                          # number of output channels that get trained on 
+    channels_out: 1   
+    seg_channels_out: 4                                        # number of classes for segmentation
     cond_on_text: True  # for the style embeds                 # if conditioned on text 
-    seg_dec: False
+    seg_dec: True
 
 encoders: 
   encoder1:
@@ -26,6 +26,7 @@ encoders:
     cond_images_channels: 0
     channels: 1
     cond_on_text: False  # for the style embeds
+
 
 cascaded: 
   image_sizes: [64, 128]
@@ -46,8 +47,10 @@ trainer:
     sample: uniform                                            # the way the noise gets sampled 
   
   loss:
-    seg: mse                                           # dice, mse
-    recon: mse                                          # ssim, mse
+    seg: dice                                           # dice, mse
+    recon: mse 
+    weight: 10                                         # ssim, mse
+    tgrad: False
 
   optimizer:
     name: Adam
@@ -68,7 +71,7 @@ dataset:
   data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
   sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
-  time_res: 5 
+  time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
   slice_res: 8
   res: 128 # resolution
   fps: 32 # frames per second
@@ -103,15 +106,16 @@ dataloader: # This is adapted when launching the training script
   num_workers: 8
 
 wandb:
-  project: "MRIdiffae"
-  entity: "niklas-bubeck"
+  project: "videoMRI"
+  entity: "videomri"
 
 checkpoint:
   path: "./outputs/diffusion"
   batch_size: 4
   cond_scale: 5.
-  log_every_x_it: 1000
-  save_every_x_it: 1000
+  log_every_x_it: 500
+  save_every_x_it: 500
 
 seed: 42
 three_d: True
+num_classes: 4

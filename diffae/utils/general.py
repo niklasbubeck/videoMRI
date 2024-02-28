@@ -138,6 +138,35 @@ def find_bounding_box(mask):
     # Return the bounding box coordinates
     return xmin, ymin, xmax, ymax
 
+def find_bounding_box3D(mask):
+    # Find non-zero elements indices
+    non_zero_indices = torch.nonzero(mask)
+
+    # Get the minimum and maximum coordinates along each axis
+    z_min, y_min, x_min = torch.min(non_zero_indices, dim=0)[0]
+    z_max, y_max, x_max = torch.max(non_zero_indices, dim=0)[0]
+
+    return z_min.item(), z_max.item(), y_min.item(), y_max.item(), x_min.item(), x_max.item()
+
+
+def center_crop_bbox(image_size, crop_size):
+    """
+    Calculates bounding box coordinates for a center crop of a given size.
+
+    Parameters:
+    image_size (tuple): The size of the original image in the format (height, width).
+    crop_size (int): The size of the center crop.
+
+    Returns:
+    tuple: A tuple containing the coordinates of the bounding box in the format (y_min, y_max, x_min, x_max).
+    """
+    height, width = image_size
+    top = int((height - crop_size) / 2)
+    left = int((width - crop_size) / 2)
+    bottom = top + crop_size
+    right = left + crop_size
+    return top, bottom, left, right
+
 def calculate_metrics(video_pred, video_tar, metrics, segmented=None):
     def name2function(metric):
         available = ["ssim", "mse", "psnr", "mae", "r2s", "lpips"]

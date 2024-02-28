@@ -200,8 +200,18 @@ class DiffusionAutoEncodersInterface:
 
         # if specifically known as for inference
         if ckpt_path is not None: 
-            state = torch.load(ckpt_path)
-            model.load_state_dict(state['model'])
+            print(f"Attempting to load from given checkpoint: {ckpt_path}")
+            try:
+                state = torch.load(ckpt_path)
+                model.load_state_dict(state['model'])
+            except: # remove "module." from keys (DDP)
+                print("was not able to load state_dict...adapting to ddp")
+                new_state = {}
+                new_state['model'] = {}
+                for k, v in state['model'].items():
+                    name = k[7:] # remove `module.`
+                    new_state['model'][name] = v
+                model.load_state_dict(new_state['model'])
             train_days = int(ckpt_path.split(".")[1])+1 # format is ckpt.X.pt
             start_time = time.time() - state['time_elapsed']
             return model, train_days, start_time, state["steps"]

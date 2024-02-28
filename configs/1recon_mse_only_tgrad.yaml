@@ -1,6 +1,6 @@
 unets:
   unet1: # BASE
-    dim: 16                                                  # Base dimension of the unet
+    dim: 8                                                  # Base dimension of the unet
     text_embed_dim: 512                                       # dimension of the resnet induced embeddings
     num_resnet_blocks: 2                                      # num of resnetblocks to use on each stage
     dim_mults: [1,2,4]                                        # multiplicators of each stage    
@@ -9,14 +9,13 @@ unets:
     layer_cross_attns: [False, False, True]                   # activating layer crossattention for each stage
     cond_images_channels: 0                                   # number of conditional input channels
     channels: 1                                               # number of input channels that get trained on 
-    channels_out: 1 
-    seg_channels_out: 4                                          # number of output channels that get trained on 
+    channels_out: 1                                           # number of output channels that get trained on 
     cond_on_text: True  # for the style embeds                 # if conditioned on text 
     seg_dec: False
 
 encoders: 
   encoder1:
-    dim: 16
+    dim: 8
     text_embed_dim: 512
     num_resnet_blocks: 2
     dim_mults: [1,2,4]
@@ -26,6 +25,7 @@ encoders:
     cond_images_channels: 0
     channels: 1
     cond_on_text: False  # for the style embeds
+
 
 cascaded: 
   image_sizes: [64, 128]
@@ -48,6 +48,7 @@ trainer:
   loss:
     seg: mse                                           # dice, mse
     recon: mse                                          # ssim, mse
+    tgrad: True
 
   optimizer:
     name: Adam
@@ -68,7 +69,7 @@ dataset:
   data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
   sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
-  time_res: 5 
+  time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
   slice_res: 8
   res: 128 # resolution
   fps: 32 # frames per second
@@ -103,8 +104,8 @@ dataloader: # This is adapted when launching the training script
   num_workers: 8
 
 wandb:
-  project: "MRIdiffae"
-  entity: "niklas-bubeck"
+  project: "videoMRI"
+  entity: "videomri"
 
 checkpoint:
   path: "./outputs/diffusion"

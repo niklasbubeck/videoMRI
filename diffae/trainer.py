@@ -11,13 +11,15 @@ import random as rand
 from accelerate import Accelerator, DistributedType, DistributedDataParallelKwargs
 from omegaconf import OmegaConf
 import torch.nn.functional as F
+from monai.networks.utils import one_hot
+from scipy.ndimage.morphology import distance_transform_edt
 
 
 from .sampler import Sampler
 from .models.network_helpers import resize_video_to
 from .models.model import CascadedDiffusionModel
-from .models.loss import SimpleLoss, DiceLoss, SSIMLoss, VideoSSIMLoss, SegmentationCriterion
-from .utils import Meter, TimestepSampler, get_betas, seed_everything, training_reproducibility_cudnn, vid_to_wandb, calculate_metrics
+from .models.loss import SimpleLoss, DiceLoss, SSIMLoss, VideoSSIMLoss, SegmentationCriterion, TemporalGradLoss
+from .utils import Meter, TimestepSampler, get_betas, seed_everything, training_reproducibility_cudnn, vid_to_wandb, calculate_metrics, find_bounding_box3D, center_crop_bbox
 from .sampler import Sampler
 from .models.network_helpers import unnormalize_zero_to_one, normalize_neg_one_to_one
 
@@ -75,6 +77,8 @@ class Trainer(torch.nn.Module):
 
         self.criterion_recon = SimpleLoss() if self.config.trainer.loss.recon == "mse" else VideoSSIMLoss()
         self.criterion_seg = SimpleLoss() if self.config.trainer.loss.seg == "mse" else SegmentationCriterion(type="dice")
+        self.temp_grad_loss = TemporalGradLoss()
+
 
         self.fp16 = config.trainer.fp16
         self.grad_accum_steps = config.trainer.grad_accum_steps
@@ -166,6 +170,20 @@ class Trainer(torch.nn.Module):
             return
         return self.accelerator.print(msg, **kwargs)
 
+    def _create_tgrad_mask(self, gt_seg, crop_size):
+        image_size=(gt_seg.shape[-1], gt_seg.shape[-2])
+        box = torch.ones(image_size, dtype=torch.uint8)
+        masks = []
+        for seg in gt_seg:
+            top, bottom, left, right = center_crop_bbox(image_size, crop_size=crop_size)
+
+            box[bottom:top, left:right] = 0 # for the cardiac center region, maybe you can use segmentation groundtruth to localize it. and don't forget to add offset
+            box = torch.from_numpy(distance_transform_edt(box) / 4)  # laplace weighting decay
+            box = torch.exp(-0.2*box).type(torch.float32)
+            weighting_mask = 1 - box
+            masks.append(weighting_mask[None,None,None,...])
+        return torch.cat(masks, dim=0)
+
     def _sample_noise(self, input, view):
         # sample the noise 
         batch_size = input.shape[0]
@@ -212,6 +230,7 @@ class Trainer(torch.nn.Module):
         
 
     def train(self, unet_number=0):
+        torch.autograd.set_detect_anomaly(True)
         # state = dict(
         #     model = self.model.state_dict(),
         # )
@@ -237,30 +256,38 @@ class Trainer(torch.nn.Module):
                     view[0] = -1
 
                     xt, t, noise_img = self._sample_noise(sa, view)
-                    # xt = torch.sqrt(alpha_t) * input + torch.sqrt(1.0 - alpha_t) * noise_img
 
                     out_recon, out_seg = self.unet_being_trained(sa, xt, t.float())
                     
                     pred_recon = (xt - out_recon * torch.sqrt(1-self.alphas_cumprod[t].view(*view))) / torch.sqrt(self.alphas_cumprod[t].view(*view))
+                    pred_recon = pred_recon.clamp(0,1)
 
                     if out_seg is not None:
                         pred_seg = (xt - out_seg * torch.sqrt(1-self.alphas_cumprod[t].view(*view))) / torch.sqrt(self.alphas_cumprod[t].view(*view))
                         pred_seg = F.softmax(pred_seg, dim=1)
-                        pred_seg = torch.argmax(pred_seg, dim=1)
 
                     if self.is_main and self.iter % 100 == 0:
                         vid_recon = torch.cat([sa, pred_recon], dim=-2)
-                        self._videos_to_wandb(vid_recon, 'recon')
+                        self._videos_to_wandb(vid_recon, 'train_recon')
+                        vid_noise = torch.cat([xt, noise_img, out_recon])
+                        self._videos_to_wandb(vid_noise, "train_noise")
                         if out_seg is not None:
-                            vid_seg = torch.cat([sa_seg, pred_seg], dim=-2)
-                            self._videos_to_wandb(vid_seg, "seg")
+                            vid_seg = torch.cat([sa_seg, torch.argmax(pred_seg, dim=1).unsqueeze(0)], dim=-2)
+                            self._videos_to_wandb(vid_seg/4, "train_seg")
 
                     loss_recon = self.criterion_recon(pred_recon, sa)
                     
                     loss_seg = 0
                     if out_seg is not None:
-                        loss_seg = self.criterion_seg(pred_seg, sa_seg)
+                        loss_seg, dice_seg = self.criterion_seg(pred_seg, one_hot(sa_seg, num_classes=4), one_hot_enc=False)
+                        loss_seg *= self.config.trainer.loss.weight
                     loss = loss_recon + loss_seg if out_seg is not None else loss_recon
+
+                    if self.config.trainer.loss.tgrad:
+                        mask = self._create_tgrad_mask(sa_seg, crop_size=64)
+                        grad_t_loss = self.temp_grad_loss(pred_recon, mask=mask.to(self.device)) 
+                        loss += grad_t_loss
+                    
 
                 if self.is_main: self._one_line_log(steps, loss_recon, loss_seg, len(self.train_loader), self.start_time)
                 self.accelerator.backward(loss)
@@ -275,15 +302,24 @@ class Trainer(torch.nn.Module):
                         psnrs=[]
                         ssims=[]
                         gts = []
+                        dices = []
+                        dices_1=[]
+                        dices_2=[]
+                        dices_3=[]
                         samples = []
+                        gts_seg=[]
+                        samples_seg=[]
                         # get interpolation results
                         for iter, batch in tqdm(enumerate(self.test_loader), disable=self.disable_tqdm):
                             if iter >=1:
                                 break
                             for n in [5]:
-                                subject, gt, sample, seg, slice_nr1 = self.sampler.sample_interpolated_testdata_batch(batch, metrics=metrics, slice_nr=n)
+                                subject, gt, sample, gt_seg, seg, slice_nr1 = self.sampler.sample_interpolated_testdata_batch(batch, metrics=metrics, slice_nr=n)
                                 gts.append(gt)
                                 samples.append(sample)
+                                if seg is not None: 
+                                    gts_seg.append(gt_seg)
+                                    samples_seg.append(seg)
                                 ref = gt[0,0,...].cpu().numpy()
                                 sample = sample[0,0,...].cpu().numpy()
 
@@ -291,21 +327,40 @@ class Trainer(torch.nn.Module):
                                 mses.append(mse)
                                 psnrs.append(psnr)
                                 ssims.append(ssim)
+                                if seg is not None:
+                                    dice_loss , dice = self.criterion_seg(seg, one_hot(gt_seg, num_classes=4), one_hot_enc=False)
+                                    dices.append(1 - dice_loss)
+                                    dices_1.append(dice[0])
+                                    dices_2.append(dice[1])
+                                    dices_3.append(dice[2])
                         gts = torch.stack(gts, dim=0).squeeze(0)
                         samples = torch.stack(samples, dim=0).squeeze(0)
                         vid = torch.cat([gts, samples], dim=-2)
+                        if seg is not None: 
+                            gts_seg = torch.stack(gts_seg, dim=0).squeeze(0)
+                            samples_seg = torch.stack(samples_seg, dim=0).squeeze(0)
+                            vid_seg = torch.cat([gts_seg, torch.argmax(samples_seg,dim=1).unsqueeze(0)], dim=-2)
                         if self.is_main:
                             self._videos_to_wandb(vid, "eval_inter")
-
+                            if seg is not None: 
+                                self._videos_to_wandb(vid_seg/4, "eval_seg_inter")
 
                         mse = sum(mses) / len(mses)
                         psnr = sum(psnrs) / len(psnrs)
                         ssim = sum(ssims) / len(ssims)
+                        dice = sum(dices) / len(dices)
+                        dice_1 = sum(dices_1) / len(dices_1)
+                        dice_2 = sum(dices_2) / len(dices_2)
+                        dice_3 = sum(dices_3) / len(dices_3)
                         if self.is_main:
                             wandb.log({
                                 "val_mse_inter" : mse, 
                                 "val_psnr_inter" : psnr,
                                 "val_ssim_inter" : ssim, 
+                                "val_dice_inter" : dice,
+                                "val_dice_inter_1" : dice_1,
+                                "val_dice_inter_2" : dice_2,
+                                "val_dice_inter_3" : dice_3,
                                 "step": steps, 
                                 "epoch": steps//len(self.train_loader), 
                                 "mvid": steps*self.config.bs/1e6
@@ -315,16 +370,25 @@ class Trainer(torch.nn.Module):
                         mses=[]
                         psnrs=[]
                         ssims=[]
+                        dices=[]
+                        dices_1=[]
+                        dices_2=[]
+                        dices_3=[]
                         gts=[]
                         samples=[]
+                        gts_seg=[]
+                        samples_seg=[]
                         # get reconstruction results
                         for iter, batch in tqdm(enumerate(self.test_loader), disable=self.disable_tqdm):
                             if iter >=1:
                                 break 
                             for n in [5]:
-                                fnames, gt, sample, seg, slice_nr = self.sampler.sample_testdata_batch(batch, slice_nr=n)
+                                fnames, gt, sample, gt_seg, seg, slice_nr = self.sampler.sample_testdata_batch(batch, slice_nr=n)
                                 gts.append(gt)
                                 samples.append(sample)
+                                if seg is not None: 
+                                    gts_seg.append(gt_seg)
+                                    samples_seg.append(seg)
                                 ref = gt[0,0,...].cpu().numpy()
                                 sample = sample[0,0,...].cpu().numpy()
 
@@ -332,15 +396,29 @@ class Trainer(torch.nn.Module):
                                 mses.append(mse)
                                 psnrs.append(psnr)
                                 ssims.append(ssim)
+                                if seg is not None:
+                                    dice_loss , dice = self.criterion_seg(seg, one_hot(gt_seg, num_classes=4), one_hot_enc=False)
+                                    dices.append(1-dice_loss)
+                                    dices_1.append(dice[0])
+                                    dices_2.append(dice[1])
+                                    dices_3.append(dice[2])
 
                         mse = sum(mses) / len(mses)
                         psnr = sum(psnrs) / len(psnrs)
                         ssim = sum(ssims) / len(ssims)
+                        dice = sum(dices) / len(dices)
+                        dice_1 = sum(dices_1) / len(dices_1)
+                        dice_2 = sum(dices_2) / len(dices_2)
+                        dice_3 = sum(dices_3) / len(dices_3)
                         if self.is_main:
                             wandb.log({
                                 "val_mse_recon" : mse, 
                                 "val_psnr_recon" : psnr,
                                 "val_ssim_recon" : ssim, 
+                                "val_dice_recon" : dice,
+                                "val_dice_recon_1" : dice_1,
+                                "val_dice_recon_2" : dice_2,
+                                "val_dice_recon_3" : dice_3,
                                 "step": steps, 
                                 "epoch": steps//len(self.train_loader), 
                                 "mvid": steps*self.config.bs/1e6
@@ -349,8 +427,15 @@ class Trainer(torch.nn.Module):
                         gts = torch.stack(gts, dim=0).squeeze(0)
                         samples = torch.stack(samples, dim=0).squeeze(0)
                         vid = torch.cat([gts, samples], dim=-2)
+                        if seg is not None: 
+                            gts_seg = torch.stack(gts_seg, dim=0).squeeze(0)
+                            samples_seg = torch.stack(samples_seg, dim=0).squeeze(0)
+                            vid_seg = torch.cat([gts_seg, torch.argmax(samples_seg,dim=1).unsqueeze(0)], dim=-2)
                         if self.is_main:
                             self._videos_to_wandb(vid, "eval_recon")
+                            if seg is not None: 
+                                self._videos_to_wandb(vid_seg/4, "eval_seg_recon")
+
 
                 if self.is_main:
                     if (steps + 1) % self.save_interval == 0:

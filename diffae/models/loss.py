@@ -109,6 +109,24 @@ class DiceCriterion(torch.nn.Module):
             loss = 1 - loss
         return loss
 
+class TemporalGradLoss(torch.nn.Module):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
+    def forward(self, flow, mode=1, mask=None):
+        dt = flow[:,:, 1:, ...] - flow[:,:, :-1, ...]
+        if mode == 2:
+            dt = dt[:,:, 1:, ...] - dt[:,:, :-1, ...]
+        elif mode == 1:
+            pass
+        else:
+            raise NotImplementedError
+        print("dt shape: ", dt.shape)
+        eps = 1e-6
+        dt = torch.sqrt(dt**2 + eps)
+        if mask is not None:
+                dt *= mask
+        return dt.mean()
 
 
 class SegmentationCriterion(torch.nn.Module):
@@ -121,7 +139,7 @@ class SegmentationCriterion(torch.nn.Module):
             raise NotImplementedError(f'Loss function {type} is not implemented for segmentation')
     
     def forward(self, pred, target, mask=None, one_hot_enc=True, num_classes=None):
-        assert one_hot_enc ==True and num_classes != None, "when using one hot, you have to specify the number of classes to encode"
+        if one_hot_enc == True and num_classes != None: print("when using one hot, you have to specify the number of classes to encode")
         assert pred.shape == target.shape, f"shapes of pred and target do not match with {pred.shape} {target.shape}"
         if one_hot_enc:
             print(pred.unique(), num_classes, target.unique())
