@@ -47,7 +47,10 @@ trainer:
   
   loss:
     seg: mse                                           # dice, mse
-    recon: mse                                          # ssim, mse
+    recon: mse 
+    tgrad: False
+    weight: 1                                        # ssim, mse
+    tweight: 1
 
   optimizer:
     name: Adam

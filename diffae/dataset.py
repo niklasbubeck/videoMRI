@@ -75,7 +75,11 @@ class UKBB(Dataset):
                 # self.seg_fnames += glob.glob(f'{self.root_dir}/{subject}/seg_sa_cropped.nii.gz', recursive=True)
             except:
                 ImportError('No data found in the given path')
-
+        
+        subject_list = [self.extract_seven_concurrent_numbers(fname) for fname in tqdm(self.fnames)]
+        with open("used_sbj.txt", 'w') as f:
+            for item in tqdm(subject_list):
+                f.write(str(item) + '\n')
         # some subjects dont have both, check for edge cases 
         # sa_subjects = [self.extract_seven_concurrent_numbers(file) for file in self.sa_fnames]
         # la_subjects = [self.extract_seven_concurrent_numbers(file) for file in self.la_fnames]

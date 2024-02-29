@@ -125,7 +125,7 @@ class TemporalGradLoss(torch.nn.Module):
         eps = 1e-6
         dt = torch.sqrt(dt**2 + eps)
         if mask is not None:
-                dt *= mask
+                dt = dt * mask
         return dt.mean()
 
 
