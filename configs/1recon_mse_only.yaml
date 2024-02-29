@@ -82,6 +82,7 @@ dataset:
   cond_slices: [5]
   train_pct: 0.8
   time_idx: null
+  mode: fcfs
   
   train: 
     transforms:

@@ -12,6 +12,7 @@ from accelerate import Accelerator, DistributedType, DistributedDataParallelKwar
 from omegaconf import OmegaConf
 import torch.nn.functional as F
 from monai.networks.utils import one_hot
+from generative.networks.nets import AutoencoderKL
 from scipy.ndimage.morphology import distance_transform_edt
 
 
@@ -24,9 +25,10 @@ from .sampler import Sampler
 from .models.network_helpers import unnormalize_zero_to_one, normalize_neg_one_to_one
 
 class Trainer(torch.nn.Module):
-    def __init__(self, model, config, output_dir, train_dataset, test_dataset, split_batches=True, **kwargs):
+    def __init__(self, model, aekl_model, config, output_dir, train_dataset, test_dataset, split_batches=True, **kwargs):
         super().__init__()
         self.model = model
+        self.aekl_model = aekl_model
         self.config = config
         self.output_dir = output_dir
         self.train_dataset = train_dataset
@@ -34,6 +36,11 @@ class Trainer(torch.nn.Module):
         self.test_dataset = test_dataset
         self.test_loader = DataLoader(self.test_dataset, self.config.bs, shuffle=False)
 
+        self.use_latent = False
+        try: 
+            self.use_latent = self.config.trainer.use_latent
+        except:
+            pass 
 
         self.three_d = self.config.three_d
         self.start_time = kwargs['start_time']
@@ -90,7 +97,9 @@ class Trainer(torch.nn.Module):
 
         self.sampler = Sampler(model=model, config=config, device=self.device)
 
+        # put everything to correct device 
         self.model.to(self.device)
+        self.aekl_model.to(self.device)
         self.to(self.device)
 
         # define betas and alphas
@@ -258,14 +267,25 @@ class Trainer(torch.nn.Module):
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     random = np.random.randint(0 , batch[0].shape[2])
                     sa, _, sa_seg, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random, unet_number=unet_number)
+                    gt_sa = sa.detach().clone()
                     # handling 3d and 2d view
                     view = [1 for i in range(len(sa.shape))]
                     view[0] = -1
+
+                    if self.use_latent:
+                        sa = self.aekl_model.encode_stage_2_inputs(sa)
+                        print("after latent: ", sa.shape)
+
 
                     xt, t, noise_img = self._sample_noise(sa, view)
 
                     out_recon, out_seg = self.unet_being_trained(sa, xt, t.float())
                     
+                    if self.use_latent:
+                        out_recon = self.aekl_model.decode_stage_2_inputs(out_recon)
+                        if out_seg is not None:
+                            out_seg = self.aekl_model.decode_stage_2_inputs(out_seg)
+
                     pred_recon = (xt - out_recon * torch.sqrt(1-self.alphas_cumprod[t].view(*view))) / torch.sqrt(self.alphas_cumprod[t].view(*view))
                     pred_recon = pred_recon.clamp(0,1)
 
@@ -274,7 +294,7 @@ class Trainer(torch.nn.Module):
                         pred_seg = F.softmax(pred_seg, dim=1)
 
                     if self.is_main and self.iter % 100 == 0:
-                        vid_recon = torch.cat([sa, pred_recon], dim=-2)
+                        vid_recon = torch.cat([gt_sa, pred_recon], dim=-2)
                         self._vid_or_image_to_wandb(vid_recon, 'train_recon')
                         vid_noise = torch.cat([xt, noise_img, out_recon])
                         self._vid_or_image_to_wandb(vid_noise, "train_noise")
@@ -282,7 +302,7 @@ class Trainer(torch.nn.Module):
                             vid_seg = torch.cat([sa_seg, torch.argmax(pred_seg, dim=1).unsqueeze(1)], dim=-2)
                             self._vid_or_image_to_wandb(vid_seg/4, "train_seg")
 
-                    loss_recon = self.criterion_recon(pred_recon, sa)
+                    loss_recon = self.criterion_recon(pred_recon, gt_sa)
                     
                     loss_seg = 0
                     if out_seg is not None:

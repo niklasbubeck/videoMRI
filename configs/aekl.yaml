@@ -1,30 +1,42 @@
-unets:
-  unet1: # BASE
-    dim: 16                                                  # Base dimension of the unet
-    text_embed_dim: 512                                       # dimension of the resnet induced embeddings
-    num_resnet_blocks: 2                                      # num of resnetblocks to use on each stage
-    dim_mults: [1,2,4]                                        # multiplicators of each stage    
-    max_text_len: 512                                         # maximum text length
-    layer_attns: False                                        # activating layer attention
-    layer_cross_attns: [False, False, True]                   # activating layer crossattention for each stage
-    cond_images_channels: 0                                   # number of conditional input channels
-    channels: 1                                               # number of input channels that get trained on 
-    channels_out: 1                                           # number of output channels that get trained on 
-    cond_on_text: True  # for the style embeds                 # if conditioned on text 
-    seg_dec: False
+general:
+  exp_name: aekl_s4_l3_b8
+  network: AEKL
+  training_epochs: 250
+  eval_freq: 10
 
-encoders: 
-  encoder1:
-    dim: 16
-    text_embed_dim: 512
-    num_resnet_blocks: 2
-    dim_mults: [1,2,4]
-    max_text_len: 512
-    layer_attns: False 
-    layer_cross_attns: [False, False, True]
-    cond_images_channels: 0
-    channels: 1
-    cond_on_text: False  # for the style embeds
+
+stage1:
+  base_lr: 0.00005
+  disc_lr: 0.0001
+  perceptual_weight: 0.002
+  adv_weight: 0.005
+  kl_weight: 0.00000001
+  adv_start: 25
+  params:
+    spatial_dims: 3
+    in_channels: 1
+    out_channels: 1
+    num_channels: [32, 64, 128]
+    latent_channels: 3
+    num_res_blocks: 2
+    attention_levels: [False, False, False]
+    with_encoder_nonlocal_attn: False
+    with_decoder_nonlocal_attn: False
+
+discriminator:
+  params:
+    spatial_dims: 3
+    num_channels: 96
+    num_layers_d: 3
+    in_channels: 1
+
+perceptual_network:
+  params:
+    spatial_dims: 3
+    network_type: "squeeze"
+    is_fake_3d: True
+    fake_3d_ratio: 0.25
+
 
 
 cascaded: 
@@ -47,10 +59,7 @@ trainer:
   
   loss:
     seg: mse                                           # dice, mse
-    recon: ssim   
-    tgrad: False
-    weight: 1
-    tweight: 1                                       # ssim, mse
+    recon: mse                                          # ssim, mse
 
   optimizer:
     name: Adam
@@ -69,6 +78,7 @@ trainer:
 
 dataset:
   data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
+  # data_path: '/ssd2t/ukbb/MedMAE/original'
   sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
   time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
@@ -82,7 +92,6 @@ dataset:
   cond_slices: [5]
   train_pct: 0.8
   time_idx: null
-  mode: fcfs
   
   train: 
     transforms:
@@ -107,8 +116,9 @@ dataloader: # This is adapted when launching the training script
   num_workers: 8
 
 wandb:
-  project: "videoMRI"
-  entity: "videomri"
+  project: "MRIdiffae"
+#  entity: "niklas-bubeck"
+  entity: "jzpeterpan"
 
 checkpoint:
   path: "./outputs/diffusion"

@@ -38,6 +38,9 @@ trainer:
   grad_accum_steps: 1.0                                        # number of steps to accumulate the gradients for 
   epoch: 300                                                   # number of epochs 
 
+  use_latent_space: False    
+  aekl_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/videoMRI/checkpoint.pth"
+
   gradient_clipping:                                           # where to gradient clip 
     clip_grads: 1.0
   
@@ -82,6 +85,7 @@ dataset:
   cond_slices: [5]
   train_pct: 0.8
   time_idx: null
+  mode: fcfs
   
   train: 
     transforms:
@@ -118,3 +122,41 @@ checkpoint:
 
 seed: 42
 three_d: True
+
+general:
+  exp_name: aekl_s4_l3_b8
+  network: AEKL
+  training_epochs: 250
+  eval_freq: 10
+
+stage1:
+  base_lr: 0.00005
+  disc_lr: 0.0001
+  perceptual_weight: 0.002
+  adv_weight: 0.005
+  kl_weight: 0.00000001
+  adv_start: 25
+  params:
+    spatial_dims: 3
+    in_channels: 1
+    out_channels: 1
+    num_channels: [32, 64, 128]
+    latent_channels: 3
+    num_res_blocks: 2
+    attention_levels: [False, False, False]
+    with_encoder_nonlocal_attn: False
+    with_decoder_nonlocal_attn: False
+
+discriminator:
+  params:
+    spatial_dims: 3
+    num_channels: 96
+    num_layers_d: 3
+    in_channels: 1
+
+perceptual_network:
+  params:
+    spatial_dims: 3
+    network_type: "squeeze"
+    is_fake_3d: True
+    fake_3d_ratio: 0.25

@@ -13,6 +13,8 @@ import torch
 import yaml
 from torch.utils.data import DataLoader, Subset
 from omegaconf import OmegaConf
+from generative.networks.nets import AutoencoderKL
+from torchsummary import summary
 
 from .classifier import ClassifierTrainer, LinearClassifier, evaluate_classifier
 from .dataset import UKBB, get_torchvision_transforms
@@ -48,6 +50,9 @@ class DiffusionAutoEncodersInterface:
 
         self.model, self.train_days, self.start_time, self.steps = self._init_model(ckpt_path=ckpt_path)
 
+        self.aekl_model = self._init_autoenc_kl(ckpt=self.config.trainer.aekl_path, config=self.config.stage1.params)
+        summary(self.aekl_model.cuda(), (1,32,128,128))
+        
         # clf_ckpt_path = self.output_dir / 'ckpt' / args['clf_ckpt'] if 'clf_ckpt' in args else None
         # self.clf_model = self._init_clf_model(clf_ckpt_path)
 
@@ -92,6 +97,15 @@ class DiffusionAutoEncodersInterface:
         self._create_save_folder(output_dir, self.config)
 
         return output_dir
+
+    def _init_autoenc_kl(self, ckpt, config): 
+        # put to device later in the trainer using accelerator
+        model = AutoencoderKL(**config)
+        state = torch.load(ckpt)
+        model.load_state_dict(state['state_dict'], strict=True)
+        model.eval()
+
+        return model
 
     def _merge_model(self, checkpoints=None, only_stage=[0]):
         if checkpoints is None: 
@@ -291,7 +305,7 @@ class DiffusionAutoEncodersInterface:
             "steps": self.steps
         }
 
-        trainer = Trainer(self.model, self.config, self.output_dir, self.train_dataset, self.test_dataset, **add_data)
+        trainer = Trainer(self.model, self.aekl_model, self.config, self.output_dir, self.train_dataset, self.test_dataset, **add_data)
         trainer.train(self.config.stage)
 
     @torch.inference_mode()

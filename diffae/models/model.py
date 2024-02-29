@@ -30,7 +30,7 @@ class BaseModel(nn.Module):
         
         sa, la, seg_sa, fnames = batch
         
-        assert mode in ["interpolate", "fcfs", "uniform"], f"dont know the given mode {mode}"
+        assert mode in ["interpolate", "fcfs", "uniform", "random"], f"dont know the given mode {mode}"
         assert sa.shape == seg_sa.shape, "segmentation and short axis image shapes do not match"
         assert sa.shape[-1] == sa.shape[-2] and sa.shape[-1] in [16, 32, 64, 128, 256], "Can only take care of quadratic images"
 
@@ -48,6 +48,13 @@ class BaseModel(nn.Module):
         if mode == "fcfs":
             sa = sa[:, :, :, 0::time_res, ...]
             seg_sa = seg_sa[:, :, :, 0::time_res, ...]
+
+        if mode == "random": 
+            print("sa shape: ", sa.shape)
+            start_idx = randint(0, sa.shape[3] - time_res -1)
+            end_idx = start_idx + time_res
+            sa = sa[:, :, :, start_idx:end_idx, ...]
+            seg_sa = seg_sa[:, :, :, start_idx:end_idx, ...]
 
         if mode == "uniform": 
             raise NotImplementedError

@@ -36,7 +36,10 @@ cascaded:
 trainer:
   fp16: False                                                  # if to use automatic mixec precision
   grad_accum_steps: 1.0                                        # number of steps to accumulate the gradients for 
-  epoch: 300                                                   # number of epochs 
+  epoch: 300    
+  
+  use_latent_space: True    
+  aekl_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/videoMRI/checkpoint.pth"                                           # number of epochs 
 
   gradient_clipping:                                           # where to gradient clip 
     clip_grads: 1.0
@@ -47,10 +50,10 @@ trainer:
   
   loss:
     seg: mse                                           # dice, mse
-    recon: ssim   
+    recon: mse 
     tgrad: False
-    weight: 1
-    tweight: 1                                       # ssim, mse
+    weight: 1                                        # ssim, mse
+    tweight: 1
 
   optimizer:
     name: Adam
@@ -71,7 +74,7 @@ dataset:
   data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
   sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
-  time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
+  time_res: 32 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
   slice_res: 8
   res: 128 # resolution
   fps: 32 # frames per second
@@ -82,7 +85,7 @@ dataset:
   cond_slices: [5]
   train_pct: 0.8
   time_idx: null
-  mode: fcfs
+  mode: random
   
   train: 
     transforms:
@@ -119,3 +122,41 @@ checkpoint:
 
 seed: 42
 three_d: True
+
+general:
+  exp_name: aekl_s4_l3_b8
+  network: AEKL
+  training_epochs: 250
+  eval_freq: 10
+
+stage1:
+  base_lr: 0.00005
+  disc_lr: 0.0001
+  perceptual_weight: 0.002
+  adv_weight: 0.005
+  kl_weight: 0.00000001
+  adv_start: 25
+  params:
+    spatial_dims: 3
+    in_channels: 1
+    out_channels: 1
+    num_channels: [32, 64, 128]
+    latent_channels: 3
+    num_res_blocks: 2
+    attention_levels: [False, False, False]
+    with_encoder_nonlocal_attn: False
+    with_decoder_nonlocal_attn: False
+
+discriminator:
+  params:
+    spatial_dims: 3
+    num_channels: 96
+    num_layers_d: 3
+    in_channels: 1
+
+perceptual_network:
+  params:
+    spatial_dims: 3
+    network_type: "squeeze"
+    is_fake_3d: True
+    fake_3d_ratio: 0.25
