@@ -13,6 +13,7 @@ from tqdm import tqdm
 from einops import rearrange
 import numpy as np
 import wandb
+import time
 # from util import log_ldm_sample_unconditioned, log_reconstructions
 
 class PSNR(torch.nn.Module):
@@ -180,7 +181,7 @@ def train_epoch_aekl(
     epoch_kl_loss = 0
     epoch_g_loss = 0
     epoch_d_loss = 0
-
+    tic = time.time()
     pbar = tqdm(enumerate(loader), total=len(loader))
     for step, batch in pbar:
         slc_random = np.random.randint(0 , batch[0].shape[1])
@@ -274,7 +275,8 @@ def train_epoch_aekl(
             },
         )
     wandb.log({f"train/l1_loss": epoch_l1_loss, "train/p_loss": epoch_p_loss, "train/kl_loss": epoch_kl_loss, "train/g_loss": epoch_g_loss, "train/d_loss": epoch_d_loss}, step=epoch, commit=False)
-    wandb.log({f"train/lr_g": get_lr(optimizer_g), "train/lr_d": get_lr(optimizer_d)}, step=epoch)
+    wandb.log({f"train/lr_g": get_lr(optimizer_g), "train/lr_d": get_lr(optimizer_d)}, step=epoch, commit=False)
+    wandb.log({f"train/epoch_time (min)": (time.time()-tic)/60}, step=epoch)
 
 def videos_to_wandb(vid, caption, step):
     vid = torch.repeat_interleave(vid, 3, dim=1)
@@ -357,7 +359,7 @@ def eval_aekl(
         for k, v in losses.items():
             total_losses[k] = total_losses.get(k, 0) + v.item() * images.shape[0]
 
-    epoch_psnr += PSNR(max_value='on_fly')(reconstruction, images).item()/len(loader)
+        epoch_psnr += PSNR(max_value='on_fly')(reconstruction, images).item()/len(loader)
     for k in total_losses.keys():
         total_losses[k] /= len(loader.dataset)
 
