@@ -323,6 +323,8 @@ class Trainer(torch.nn.Module):
                                 break
                             for n in [5]:
                                 subjects, gt_recons, sample_recons, gt_segs, sample_segs, slice_nrs = self.sampler.sample_interpolated_testdata_batch(batch, metrics=metrics, slice_nr=n)
+                                if sample_segs is None: 
+                                    sample_segs = [None] * gt_segs.shape[0]
                                 for (gt ,sample, gt_seg, seg) in zip(gt_recons, sample_recons, gt_segs, sample_segs):
                                     gts.append(gt)
                                     samples.append(sample)
@@ -393,6 +395,8 @@ class Trainer(torch.nn.Module):
                                 break 
                             for n in [5]:
                                 subjects, gt_recons, sample_recons, gt_segs, sample_segs, slice_nrs= self.sampler.sample_testdata_batch(batch, slice_nr=n)
+                                if sample_segs is None: 
+                                    sample_segs = [None] * gt_segs.shape[0]
                                 for (gt ,sample, gt_seg, seg) in zip(gt_recons, sample_recons, gt_segs, sample_segs):
                                     gts.append(gt)
                                     samples.append(sample)

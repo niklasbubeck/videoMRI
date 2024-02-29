@@ -1,6 +1,6 @@
 unets:
   unet1: # BASE
-    dim: 8                                                  # Base dimension of the unet
+    dim:  16                                                  # Base dimension of the unet
     text_embed_dim: 512                                       # dimension of the resnet induced embeddings
     num_resnet_blocks: 2                                      # num of resnetblocks to use on each stage
     dim_mults: [1,2,4]                                        # multiplicators of each stage    
@@ -15,7 +15,7 @@ unets:
 
 encoders: 
   encoder1:
-    dim: 8
+    dim: 16
     text_embed_dim: 512
     num_resnet_blocks: 2
     dim_mults: [1,2,4]
@@ -50,7 +50,7 @@ trainer:
     recon: mse                                          # ssim, mse
     tgrad: True
     weight: 1 
-    tweight: 0.1
+    tweight: 0.01
 
   optimizer:
     name: Adam
