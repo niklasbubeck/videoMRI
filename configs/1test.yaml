@@ -1,3 +1,9 @@
+general:
+  network: ra
+  exp_name: 1test
+  training_epochs: 200
+  eval_freq: 10
+
 unets:
   unet1: # BASE
     dim: 16                                                  # Base dimension of the unet
@@ -90,7 +96,8 @@ trainer:
         max_beta: 0.999
 
 dataset:
-  data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
+#  data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
+  data_path: '/ssd2t/ukbb/MedMAE/original'
   sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
   time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
@@ -129,7 +136,8 @@ dataloader: # This is adapted when launching the training script
 
 wandb:
   project: "MRIdiffae"
-  entity: "niklas-bubeck"
+#  entity: "niklas-bubeck"
+  entity: "jzpeterpan"
 
 checkpoint:
   path: "./outputs/diffusion"

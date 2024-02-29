@@ -1,5 +1,6 @@
 import argparse
 from diffae.interface import DiffusionAutoEncodersInterface
+from diffae.interface_aekl import AEKLInterface
 from omegaconf import OmegaConf
 
 
@@ -18,7 +19,8 @@ def main():
     config = OmegaConf.merge(config, vars(args))
 
     # Overwrite config values with args
-    exp_name = args.config.split("/")[-1].split(".")[0] # get config file name
+    # exp_name = args.config.split("/")[-1].split(".")[0] # get config file name
+    exp_name = config.general.exp_name 
     config.checkpoint.exp_name = exp_name
     config.dataset.num_frames = int(config.dataset.fps * config.dataset.duration)
     if args.bs != -1:
@@ -33,8 +35,11 @@ def main():
         else:
             config.imagen.timesteps = args.steps
 
-    # TODO: instead of giving three d or not, let user choose the network to use
-    interface = DiffusionAutoEncodersInterface(config, mode='train')
+    if config.general.network == "AEKL":
+        interface = AEKLInterface(config, mode='train')
+    else:
+        # TODO: instead of giving three d or not, let user choose the network to use
+        interface = DiffusionAutoEncodersInterface(config, mode='train')
 
     interface.train()
 

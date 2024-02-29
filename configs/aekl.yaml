@@ -1,0 +1,131 @@
+general:
+  exp_name: aekl_first_try
+  network: AEKL
+  training_epochs: 200
+  eval_freq: 10
+
+
+stage1:
+  base_lr: 0.00005
+  disc_lr: 0.0001
+  perceptual_weight: 0.002
+  adv_weight: 0.005
+  kl_weight: 0.00000001
+  adv_start: 25
+  params:
+    spatial_dims: 3
+    in_channels: 1
+    out_channels: 1
+    num_channels: [32, 64, 128, 128]
+    latent_channels: 3
+    num_res_blocks: 2
+    attention_levels: [False, False, False, False]
+    with_encoder_nonlocal_attn: False
+    with_decoder_nonlocal_attn: False
+
+discriminator:
+  params:
+    spatial_dims: 3
+    num_channels: 96
+    num_layers_d: 3
+    in_channels: 1
+
+perceptual_network:
+  params:
+    spatial_dims: 3
+    network_type: "squeeze"
+    is_fake_3d: True
+    fake_3d_ratio: 0.25
+
+
+
+cascaded: 
+  image_sizes: [64, 128]
+  channels: 1
+  temporal_downsample_factor: [1, 1]
+  text_embed_dim: 512
+
+trainer:
+  fp16: False                                                  # if to use automatic mixec precision
+  grad_accum_steps: 1.0                                        # number of steps to accumulate the gradients for 
+  epoch: 300                                                   # number of epochs 
+
+  gradient_clipping:                                           # where to gradient clip 
+    clip_grads: 1.0
+  
+  timestep_sampler:                                            
+    num_sample_steps: 1000                                     # number of timesampling steps for the DM encoding/decoding
+    sample: uniform                                            # the way the noise gets sampled 
+  
+  loss:
+    seg: mse                                           # dice, mse
+    recon: mse                                          # ssim, mse
+
+  optimizer:
+    name: Adam
+    params:
+        lr: 0.0001
+        weight_decay: 0
+  
+  beta:
+    schedule: linear
+    linear:
+        start: 0.0001
+        end: 0.02
+    cosine:
+        s: 0.008
+        max_beta: 0.999
+
+dataset:
+ data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
+  # data_path: '/ssd2t/ukbb/MedMAE/original'
+  sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
+  deactivate_cache: False
+  time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
+  slice_res: 8
+  res: 128 # resolution
+  fps: 32 # frames per second
+  duration: 1 #seconds
+  grayscale: False
+  use_la: False
+  use_seg: False
+  cond_slices: [5]
+  train_pct: 0.8
+  time_idx: null
+  
+  train: 
+    transforms:
+      - name: RandomHorizontalFlip
+        params:
+            p: 0.0
+      - name: RandomVerticalFlip
+        params:
+            p: 0.0
+
+  test: 
+    transforms:
+      - name: RandomHorizontalFlip
+        params:
+            p: 0.0
+      - name: RandomVerticalFlip
+        params:
+            p: 0.0
+
+dataloader: # This is adapted when launching the training script
+  batch_size: 8
+  num_workers: 8
+
+wandb:
+  project: "MRIdiffae"
+#  entity: "niklas-bubeck"
+  entity: "jzpeterpan"
+
+checkpoint:
+  path: "./outputs/diffusion"
+  batch_size: 4
+  cond_scale: 5.
+  log_every_x_it: 1000
+  save_every_x_it: 1000
+
+seed: 42
+three_d: True
