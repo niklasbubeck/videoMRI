@@ -186,7 +186,7 @@ def train_epoch_aekl(
         slc_random = np.random.randint(0 , batch[0].shape[1])
         t_random = np.random.randint(0, 17)
         sa, _, _, fnames = batch
-        images = sa[..., slc_random:slc_random+1, t_random:t_random+32, :, :].to(device)
+        images = sa[..., slc_random, t_random:t_random+32, :, :].to(device)
 
         # GENERATOR
         optimizer_g.zero_grad(set_to_none=True)
@@ -309,7 +309,7 @@ def eval_aekl(
     for batch in loader:
         slc_random = batch[0].shape[1]//2
         sa, _, _, fnames = batch
-        images = sa[..., slc_random:slc_random+1, :32, :, :].to(device)
+        images = sa[..., slc_random, :32, :, :].to(device)
 
 
         with autocast(enabled=True):

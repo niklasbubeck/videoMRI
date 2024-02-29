@@ -233,6 +233,10 @@ class AEKLInterface(DiffusionAutoEncodersInterface):
         self.train_dataset = Subset(ds, idxs[:split_idx])
         self.test_dataset = Subset(ds, idxs[split_idx:])
 
+        self.train_dataset =torch.utils.data.DataLoader(self.train_dataset, batch_size=self.config.dataloader.batch_size,
+                                            shuffle=True, num_workers=self.config.dataloader.num_workers)
+        self.test_dataset =torch.utils.data.DataLoader(self.test_dataset, batch_size=1,
+                                            shuffle=False, num_workers=1)
         # elif self.mode == 'clf_train':
         #     image_dataset = get_dataset(name=data_name, split='train', transform=self.transforms)
         #     image_loader = DataLoader(image_dataset, **self.cfg['classifier']['train']['dataloader'])

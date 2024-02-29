@@ -1,5 +1,5 @@
 general:
-  exp_name: aekl_first_try
+  exp_name: aekl_s4_l3_b8
   network: AEKL
   training_epochs: 250
   eval_freq: 10
