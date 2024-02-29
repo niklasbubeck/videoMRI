@@ -2,6 +2,7 @@ import argparse
 from diffae.interface import DiffusionAutoEncodersInterface
 from diffae.interface_aekl import AEKLInterface
 from omegaconf import OmegaConf
+import os 
 
 
 def main():
@@ -45,4 +46,5 @@ def main():
 
 
 if __name__ == '__main__':
+    os.environ["WANDB__SERVICE_WAIT"] = "3000"
     main()

@@ -1,7 +1,7 @@
 general:
   exp_name: aekl_first_try
   network: AEKL
-  training_epochs: 200
+  training_epochs: 250
   eval_freq: 10
 
 
@@ -77,7 +77,7 @@ trainer:
         max_beta: 0.999
 
 dataset:
- data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
+  data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
   # data_path: '/ssd2t/ukbb/MedMAE/original'
   sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
