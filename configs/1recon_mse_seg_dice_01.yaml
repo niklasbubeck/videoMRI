@@ -51,6 +51,7 @@ trainer:
     recon: mse 
     weight: 0.1                                         # ssim, mse
     tgrad: False
+    tweight: 1
 
   optimizer:
     name: Adam

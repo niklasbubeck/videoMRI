@@ -286,7 +286,7 @@ class Trainer(torch.nn.Module):
                     if self.config.trainer.loss.tgrad:
                         mask = self._create_tgrad_mask(sa_seg, crop_size=64)
                         grad_t_loss = self.temp_grad_loss(pred_recon, mask=mask.to(self.device)) 
-                        loss += grad_t_loss
+                        loss = loss + grad_t_loss * self.config.trainer.loss.tweight
                     
 
                 if self.is_main: self._one_line_log(steps, loss_recon, loss_seg, len(self.train_loader), self.start_time)
