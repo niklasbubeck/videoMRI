@@ -573,37 +573,37 @@ class Sampler:
             warnings.simplefilter('ignore')
             self.lpips_fn_alex = lpips.LPIPS(net='alex', verbose=False).to(self.device)
     
-    def ddpm_sampler(self, xt, e, _t, alphas_shape, dim, eta=1):
-        pred_x0 = (xt - (torch.sqrt(1 - self.alphas_cumprod[_t]).view(*alphas_shape + (1,) *dim) * e)) / torch.sqrt(self.alphas_cumprod[_t]).view(*alphas_shape + (1,) *dim)
-        pred_x0_scaled = pred_x0 * torch.sqrt(self.alphas_cumprod_prev[_t]).view(*alphas_shape + (1,) *dim)
+    # def ddpm_sampler(self, xt, e, _t, batch_size, dim, eta=1):
+    #     pred_x0 = (xt - (torch.sqrt(1 - self.alphas_cumprod[_t]).view((batch_size,) + (1,) *dim) * e)) / torch.sqrt(self.alphas_cumprod[_t]).view((batch_size,) + (1,) *dim)
+    #     pred_x0_scaled = pred_x0 * torch.sqrt(self.alphas_cumprod_prev[_t]).view((batch_size,)+ (1,) *dim)
 
-        sigma = eta * torch.sqrt((1 - self.alphas_cumprod_prev[_t].view(*alphas_shape + (1,) *dim)) / (1 - self.alphas_cumprod[_t].view(*alphas_shape + (1,) *dim))) * torch.sqrt((1-self.alphas_cumprod[_t].view(*alphas_shape + (1,) *dim)) / (self.alphas_cumprod_prev[_t].view(*alphas_shape + (1,) *dim)))
-        xt_dir = torch.sqrt(1-self.alphas_cumprod_prev[_t].view(*alphas_shape + (1,) *dim) - sigma**2) * e
+    #     sigma = eta * torch.sqrt((1 - self.alphas_cumprod_prev[_t].view((batch_size,) + (1,) *dim)) / (1 - self.alphas_cumprod[_t].view((batch_size,)  + (1,) *dim))) * torch.sqrt((1-self.alphas_cumprod[_t].view((batch_size,)  + (1,) *dim)) / (self.alphas_cumprod_prev[_t].view((batch_size,)  + (1,) *dim)))
+    #     xt_dir = torch.sqrt(1-self.alphas_cumprod_prev[_t].view((batch_size,) + (1,) *dim) - sigma**2) * e
 
-        xt = pred_x0_scaled + xt_dir
-        xt = xt if _t ==0 else xt + sigma*torch.randn_like(xt)
+    #     xt = pred_x0_scaled + xt_dir
+    #     xt = xt if _t ==0 else xt + sigma*torch.randn_like(xt)
 
-        return xt
+    #     return xt
 
-    def ddim_sampler(self, xt, e, _t, alphas_shape, dim):
-        # Same as ddpm but with eta = 0.0
+    # def ddim_sampler(self, xt, e, _t, batch_size, dim):
+    #     # Same as ddpm but with eta = 0.0
 
-        pred_x0 = xt - torch.sqrt(1-self.alphas_cumprod[_t].view(*alphas_shape + (1,) *dim)) * e
-        scaled_pred_x0 = pred_x0 * torch.sqrt((self.alphas_cumprod[_t].view(*alphas_shape + (1,) *dim)) / self.alphas_cumprod_prev[_t].view(*alphas_shape + (1,) *dim))
+    #     pred_x0 = xt - torch.sqrt(1-self.alphas_cumprod[_t].view((batch_size,) + (1,) *dim)) * e
+    #     scaled_pred_x0 = pred_x0 * torch.sqrt((self.alphas_cumprod[_t].view((batch_size,) + (1,) *dim)) / self.alphas_cumprod_prev[_t].view((batch_size,) + (1,) *dim))
 
-        xt = scaled_pred_x0 + e * torch.sqrt(1 - self.alphas_cumprod_prev[_t].view(*alphas_shape + (1,) *dim))
+    #     xt = scaled_pred_x0 + e * torch.sqrt(1 - self.alphas_cumprod_prev[_t].view((batch_size,) + (1,) *dim))
 
-        return xt
+    #     return xt
     
-    def equation_twelve(self, xt, e, _t, alphas_shape, dim, eta=0.0):
+    def equation_twelve(self, xt, e, _t, batch_size, dim, eta=0.0):
          # Equation 12 of Denoising Diffusion Implicit Models
         x0_t = (
-            torch.sqrt(1.0 / self.alphas_cumprod[_t]).view(*alphas_shape + (1,) *dim) * xt
-            - torch.sqrt(1.0 / self.alphas_cumprod[_t] - 1).view(*alphas_shape + (1,) *dim) * e
+            torch.sqrt(1.0 / self.alphas_cumprod[_t]).view((batch_size,) + (1,) *dim) * xt
+            - torch.sqrt(1.0 / self.alphas_cumprod[_t] - 1).view((batch_size,)+ (1,) *dim) * e
         ).clamp(-1, 1)
         e = (
-            (torch.sqrt(1.0 / self.alphas_cumprod[_t]).view(*alphas_shape + (1,) *dim) * xt - x0_t)
-            / (torch.sqrt(1.0 / self.alphas_cumprod[_t] - 1).view(*alphas_shape + (1,) *dim))
+            (torch.sqrt(1.0 / self.alphas_cumprod[_t]).view((batch_size,) + (1,) *dim) * xt - x0_t)
+            / (torch.sqrt(1.0 / self.alphas_cumprod[_t] - 1).view((batch_size,)+ (1,) *dim))
         )
         sigma = (
             eta
@@ -611,10 +611,10 @@ class Sampler:
             / torch.sqrt((1 - self.alphas_cumprod[_t]) / self.alphas_cumprod_prev[_t])
         )
         xt = (
-            torch.sqrt(self.alphas_cumprod_prev[_t]).view(*alphas_shape + (1,) *dim) * x0_t
-            + torch.sqrt(1 - self.alphas_cumprod_prev[_t] - sigma**2).view(*alphas_shape + (1,) *dim) * e
+            torch.sqrt(self.alphas_cumprod_prev[_t]).view((batch_size,) + (1,) *dim) * x0_t
+            + torch.sqrt(1 - self.alphas_cumprod_prev[_t] - sigma**2).view((batch_size,) + (1,) *dim) * e
         )
-        xt = xt + torch.randn_like(xt) * sigma.view(*alphas_shape + (1,) *dim) if _t != 0 else xt
+        xt = xt + torch.randn_like(xt) * sigma.view((batch_size,)+ (1,) *dim) if torch.nonzero(_t).size(0) > 0 else xt
         return xt
 
     def sample_interpolated_testdata_batch(self, batch, eta=0.0, metrics=["mse", "psnr", "ssim"], slice_nr='rand'):
@@ -703,10 +703,12 @@ class Sampler:
 
         for _t in tqdm(reversed(range(self.num_timesteps)), desc="decoding ..."):
             t = torch.ones(batch_size, dtype=torch.long, device=self.device) * _t
+            t = t.type(torch.long)
+
             e_recon, e_seg = self.model.unet(xt, t, text_embeds=style_emb)
             alphas_shape = self.alphas_cumprod[_t].shape
 
-            xt_recon = self.equation_twelve(xt, e_recon, _t, alphas_shape, dim)
+            xt_recon = self.equation_twelve(xt, e_recon, t, batch_size, dim)
             
             # if _t % 20 == 5:
             #     videos = rearrange(xt_recon.detach().cpu(), 'b c t h w -> t h (b w) c') # type: ignore
@@ -716,7 +718,7 @@ class Sampler:
 
             xt_seg = None
             if e_seg is not None: 
-                xt_seg = self.equation_twelve(xt, e_seg, _t, alphas_shape, dim)
+                xt_seg = self.equation_twelve(xt, e_seg, t, batch_size, dim)
 
             xt = xt_recon
             # videos = rearrange(xt.detach().cpu(), 'b c t h w -> t h (b w) c') # type: ignore
@@ -744,11 +746,9 @@ class Sampler:
             for i in range(batch_size):
                 ref = x0[i,0,...].cpu().numpy()
                 sample = xt[i,0,...].cpu().numpy()
-                print(fnames)
                 subject = extract_seven_concurrent_numbers(fnames[i])[0]
                 mse, psnr, ssim = calculate_metrics(ref, sample, keys[2:])
                 results = [subject, slice_nr, mse, psnr, ssim]
-                print(results)
                 df.loc[len(df.index)] = results
 
                 # try to safe the gifs
@@ -787,10 +787,11 @@ class Sampler:
         xt_preds = []
         for _t in tqdm(reversed(range(self.num_timesteps)), desc='decoding...', total=self.num_timesteps):
             t = torch.ones(batch_size, dtype=torch.long, device=self.device) * _t
+            t = t.type(torch.long)
             e_recon, e_seg = self.model.unet(xt, t, style_emb)
             alphas_shape = self.alphas_cumprod[t].shape
 
-            xt, x0_t = self.equation_twelve(xt, e_recon, _t, alphas_shape, dim)
+            xt, x0_t = self.equation_twelve(xt, e_recon, t, batch_size, dim)
 
             x0_preds.append(x0_t[0])
             xt_preds.append(xt[0])
@@ -818,21 +819,20 @@ class Sampler:
             t = t.type(torch.long)
 
             e_recon, _ = self.model.unet(xt, t, text_embeds=style_emb)
-            shape = self.alphas_cumprod[_t].shape
             x0_t = (
-                torch.sqrt(1.0 / self.alphas_cumprod[t]).view(*shape + (1,) *dim) * xt
-                - torch.sqrt(1.0 / self.alphas_cumprod[t] - 1).view(*shape + (1,) *dim) * e_recon
+                torch.sqrt(1.0 / self.alphas_cumprod[t]).view((batch_size,) + (1,) *dim) * xt
+                - torch.sqrt(1.0 / self.alphas_cumprod[t] - 1).view((batch_size,)  + (1,) *dim) * e_recon
             ).clamp(-1, 1)
             
             # Usually our model outputs epsilon, but we re-derive it
             # in case we used x_start or x_prev prediction. (from original)
             e = (
-                (torch.sqrt(1.0 / self.alphas_cumprod[t]).view(*shape + (1,) *dim) * xt - x0_t)
-                / (torch.sqrt(1.0 / self.alphas_cumprod[t] - 1).view(*shape + (1,) *dim))
+                (torch.sqrt(1.0 / self.alphas_cumprod[t]).view((batch_size,) + (1,) *dim) * xt - x0_t)
+                / (torch.sqrt(1.0 / self.alphas_cumprod[t] - 1).view((batch_size,)  + (1,) *dim))
             )
             xt = (
-                torch.sqrt(self.alphas_cumprod_next[t]).view(*shape + (1,) *dim) * x0_t
-                + torch.sqrt(1 - self.alphas_cumprod_next[t]).view(*shape + (1,) *dim)* e
+                torch.sqrt(self.alphas_cumprod_next[t]).view((batch_size,)  + (1,) *dim) * x0_t
+                + torch.sqrt(1 - self.alphas_cumprod_next[t]).view((batch_size,)  + (1,) *dim)* e
             )
 
         return xt
@@ -858,7 +858,6 @@ class Sampler:
 
         self.model.eval()
         batch_size = xt_1.shape[0]
-
         xt = (
             torch.sin((1 - alpha) * theta) * xt_1.flatten() + torch.sin(alpha * theta) * xt_2.flatten()
         ) / torch.sin(theta)
@@ -872,14 +871,15 @@ class Sampler:
         # xt, xt0_recon, xt0_seg = self.sample(xt, embeds=style_emb)
         for _t in tqdm(reversed(range(self.num_timesteps)), desc='decoding...', total=self.num_timesteps):
             t = torch.ones(batch_size, dtype=torch.long, device=self.device) * _t
+            t = t.type(torch.long)
             e_recon, e_seg = self.model.unet(xt, t, text_embeds=style_emb)
             alphas_shape = self.alphas_cumprod[_t].shape
 
-            xt_recon = self.equation_twelve(xt, e_recon, _t, alphas_shape, dim)
+            xt_recon = self.equation_twelve(xt, e_recon, t, batch_size, dim)
 
             xt_seg = None
             if e_seg is not None:
-                xt_seg = self.equation_twelve(xt, e_seg, _t, alphas_shape, dim)
+                xt_seg = self.equation_twelve(xt, e_seg, t, batch_size, dim)
 
             xt_preds_recon.append(xt_recon)
             xt_preds_seg.append(xt_seg)

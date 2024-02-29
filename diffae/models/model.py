@@ -5,6 +5,7 @@ from functools import partial
 from scipy.ndimage import zoom
 from einops import rearrange, repeat, reduce
 from contextlib import contextmanager, nullcontext
+from random import randint
 
 
 from .network_helpers import *
@@ -254,6 +255,15 @@ class DiffusionAutoEncoders(BaseModel):
         self.encoder = SemanticEncoder(enc_config)
         self.unet = Unet(unet_config)
 
+    def preprocess(self, batch, time_res, slice_res, res, cond_slices, slice_idx, time_idx=None, mode="fcfs", normalize=False, **kwargs):
+        sa, la, sa_seg, cond, fnames = super().preprocess(batch, time_res, slice_res, res, cond_slices, slice_idx, time_idx, mode, normalize, **kwargs)
+        # selct random time dimension for 2d case 
+
+        rand_time = randint(0, sa.shape[-3]-1)
+
+        return sa[:, :, rand_time, ...], la, sa_seg[:,:,rand_time,...], cond, fnames
+
+
     def forward(self, x0, xt, t, lowres_cond_img=None, lowres_noise_times=None):
         """
         Args:
@@ -274,8 +284,8 @@ class DiffusionAutoEncoders(BaseModel):
         """
 
         style_emb = self.encoder(x0)
-        out = self.unet(xt, t, style_emb)
-        return out
+        out, place_holder = self.unet(xt, t, style_emb) # place_holder is just None 
+        return out, place_holder #keep same as with 3D seg 
 
 class DiffusionAutoEncoders3D(BaseModel):
     def __init__(self, enc_config, unet_config, lowres_cond=False):

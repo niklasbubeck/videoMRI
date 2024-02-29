@@ -197,7 +197,7 @@ class Unet(nn.Module):
         assert s == []
 
         out = self.final_block(out)
-        return out
+        return out, None
 
 
 

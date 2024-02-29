@@ -99,18 +99,24 @@ class Trainer(torch.nn.Module):
         self.alphas_cumprod = self.alphas.cumprod(dim=0)
         self.alphas_cumprod = self.alphas_cumprod.to(self.device)
     
-    @staticmethod
-    def _images_to_wandb(image_array, caption):
+    def _images_to_wandb(self, image_array, caption):
         images = wandb.Image(image_array, caption=caption)
         wandb.log({f"{caption}": images})
 
-    @staticmethod 
-    def _videos_to_wandb(vid, caption):
+    def _videos_to_wandb(self, vid, caption):
         vid = torch.repeat_interleave(vid, 3, dim=1)
         vid = rearrange(vid, 'b c t h w -> t c h (b w)').clamp(0,1).cpu().detach().numpy()
         vid = vid *255
         vid = wandb.Video(vid.astype(np.uint8), caption=caption)
         wandb.log({f"{caption}": vid})
+
+    def _vid_or_image_to_wandb(self, vid_img, caption):
+        if len(vid_img.shape) == 4:
+            self._images_to_wandb(vid_img, caption)
+        elif len(vid_img.shape) == 5:
+            self._videos_to_wandb(vid_img, caption)
+        else: 
+            raise Exception("given shape of data cannot be handled")
 
 
     @staticmethod
@@ -193,7 +199,7 @@ class Trainer(torch.nn.Module):
         xt = torch.sqrt(alpha_t) * input + torch.sqrt(1.0 - alpha_t) * noise_img
         return xt , t_img, noise_img
 
-    def _one_line_log(self, cur_step, loss_recon, loss_seg, batch_per_epoch, start_time, validation=False):
+    def _one_line_log(self, cur_step, loss_recon, loss_seg, batch_per_epoch, start_time, validation=False, **additional):
         s_step = f'Step: {cur_step:<6}'
         s_loss = f'Loss: {loss_recon + loss_seg:<6.4f}' if not validation else f'Val loss: {loss_recon + loss_seg:<6.4f}'
         s_loss_recon = f'Loss_recon: {loss_recon:<6.4f}' if not validation else f'Val loss_recon: {loss_recon:<6.4f}'
@@ -211,7 +217,8 @@ class Trainer(torch.nn.Module):
             "loss_seg" if not validation else "val_loss_seg" : loss_seg, 
             "step": cur_step, 
             "epoch": cur_step//batch_per_epoch, 
-            "mvid": cur_step*self.config.bs/1e6
+            "mvid": cur_step*self.config.bs/1e6,
+            **additional
         })
 
     def get_optimizer(self):
@@ -221,7 +228,7 @@ class Trainer(torch.nn.Module):
     
     def prepare(self, unet_number): 
         if self.prepared: 
-            print("Trainer alredy prepared,...moving on")
+            self.print("Trainer alredy prepared,...moving on")
             return 
         else: 
             self.unet_being_trained, self.train_loader, self.optimizer, self.test_loader = self.accelerator.prepare(self.model, self.train_loader, self.optimizer, self.test_loader)
@@ -268,12 +275,12 @@ class Trainer(torch.nn.Module):
 
                     if self.is_main and self.iter % 100 == 0:
                         vid_recon = torch.cat([sa, pred_recon], dim=-2)
-                        self._videos_to_wandb(vid_recon, 'train_recon')
+                        self._vid_or_image_to_wandb(vid_recon, 'train_recon')
                         vid_noise = torch.cat([xt, noise_img, out_recon])
-                        self._videos_to_wandb(vid_noise, "train_noise")
+                        self._vid_or_image_to_wandb(vid_noise, "train_noise")
                         if out_seg is not None:
-                            vid_seg = torch.cat([sa_seg, torch.argmax(pred_seg, dim=1).unsqueeze(0)], dim=-2)
-                            self._videos_to_wandb(vid_seg/4, "train_seg")
+                            vid_seg = torch.cat([sa_seg, torch.argmax(pred_seg, dim=1).unsqueeze(1)], dim=-2)
+                            self._vid_or_image_to_wandb(vid_seg/4, "train_seg")
 
                     loss_recon = self.criterion_recon(pred_recon, sa)
                     
@@ -283,13 +290,14 @@ class Trainer(torch.nn.Module):
                         loss_seg *= self.config.trainer.loss.weight
                     loss = loss_recon + loss_seg if out_seg is not None else loss_recon
 
+                    grad_t_loss = 0
                     if self.config.trainer.loss.tgrad:
                         mask = self._create_tgrad_mask(sa_seg, crop_size=64)
                         grad_t_loss = self.temp_grad_loss(pred_recon, mask=mask.to(self.device)) 
                         loss = loss + grad_t_loss * self.config.trainer.loss.tweight
                     
 
-                if self.is_main: self._one_line_log(steps, loss_recon, loss_seg, len(self.train_loader), self.start_time)
+                if self.is_main: self._one_line_log(steps, loss_recon, loss_seg, len(self.train_loader), self.start_time, additional={"tgrad": grad_t_loss})
                 self.accelerator.backward(loss)
                 self.optimizer.step()
         
@@ -314,44 +322,45 @@ class Trainer(torch.nn.Module):
                             if iter >=1:
                                 break
                             for n in [5]:
-                                subject, gt, sample, gt_seg, seg, slice_nr1 = self.sampler.sample_interpolated_testdata_batch(batch, metrics=metrics, slice_nr=n)
-                                gts.append(gt)
-                                samples.append(sample)
-                                if seg is not None: 
-                                    gts_seg.append(gt_seg)
-                                    samples_seg.append(seg)
-                                ref = gt[0,0,...].cpu().numpy()
-                                sample = sample[0,0,...].cpu().numpy()
+                                subjects, gt_recons, sample_recons, gt_segs, sample_segs, slice_nrs = self.sampler.sample_interpolated_testdata_batch(batch, metrics=metrics, slice_nr=n)
+                                for (gt ,sample, gt_seg, seg) in zip(gt_recons, sample_recons, gt_segs, sample_segs):
+                                    gts.append(gt)
+                                    samples.append(sample)
+                                    if seg is not None: 
+                                        gts_seg.append(gt_seg)
+                                        samples_seg.append(seg)
+                                    ref = gt[0,...].cpu().numpy()
+                                    sample = sample[0,...].cpu().numpy()
 
-                                mse, psnr, ssim = calculate_metrics(ref, sample, metrics)
-                                mses.append(mse)
-                                psnrs.append(psnr)
-                                ssims.append(ssim)
-                                if seg is not None:
-                                    dice_loss , dice = self.criterion_seg(seg, one_hot(gt_seg, num_classes=4), one_hot_enc=False)
-                                    dices.append(1 - dice_loss)
-                                    dices_1.append(dice[0])
-                                    dices_2.append(dice[1])
-                                    dices_3.append(dice[2])
+                                    mse, psnr, ssim = calculate_metrics(ref, sample, metrics)
+                                    mses.append(mse)
+                                    psnrs.append(psnr)
+                                    ssims.append(ssim)
+                                    if seg is not None:
+                                        dice_loss , dice = self.criterion_seg(one_hot(gt_seg[None,...],num_classes=4), seg[None,...], one_hot_enc=False)
+                                        dices.append(1 - dice_loss)
+                                        dices_1.append(dice[0])
+                                        dices_2.append(dice[1])
+                                        dices_3.append(dice[2])
                         gts = torch.stack(gts, dim=0).squeeze(0)
                         samples = torch.stack(samples, dim=0).squeeze(0)
                         vid = torch.cat([gts, samples], dim=-2)
                         if seg is not None: 
                             gts_seg = torch.stack(gts_seg, dim=0).squeeze(0)
                             samples_seg = torch.stack(samples_seg, dim=0).squeeze(0)
-                            vid_seg = torch.cat([gts_seg, torch.argmax(samples_seg,dim=1).unsqueeze(0)], dim=-2)
+                            vid_seg = torch.cat([gts_seg, torch.argmax(samples_seg,dim=1).unsqueeze(1)], dim=-2)
                         if self.is_main:
-                            self._videos_to_wandb(vid, "eval_inter")
+                            self._vid_or_image_to_wandb(vid, "eval_inter")
                             if seg is not None: 
-                                self._videos_to_wandb(vid_seg/4, "eval_seg_inter")
+                                self._vid_or_image_to_wandb(vid_seg/4, "eval_seg_inter")
 
                         mse = sum(mses) / len(mses)
                         psnr = sum(psnrs) / len(psnrs)
                         ssim = sum(ssims) / len(ssims)
-                        dice = sum(dices) / len(dices)
-                        dice_1 = sum(dices_1) / len(dices_1)
-                        dice_2 = sum(dices_2) / len(dices_2)
-                        dice_3 = sum(dices_3) / len(dices_3)
+                        dice = sum(dices) / len(dices) if seg is not None else 0
+                        dice_1 = sum(dices_1) / len(dices_1) if seg is not None else 0
+                        dice_2 = sum(dices_2) / len(dices_2) if seg is not None else 0
+                        dice_3 = sum(dices_3) / len(dices_3) if seg is not None else 0
                         if self.is_main:
                             wandb.log({
                                 "val_mse_inter" : mse, 
@@ -383,33 +392,34 @@ class Trainer(torch.nn.Module):
                             if iter >=1:
                                 break 
                             for n in [5]:
-                                fnames, gt, sample, gt_seg, seg, slice_nr = self.sampler.sample_testdata_batch(batch, slice_nr=n)
-                                gts.append(gt)
-                                samples.append(sample)
-                                if seg is not None: 
-                                    gts_seg.append(gt_seg)
-                                    samples_seg.append(seg)
-                                ref = gt[0,0,...].cpu().numpy()
-                                sample = sample[0,0,...].cpu().numpy()
+                                subjects, gt_recons, sample_recons, gt_segs, sample_segs, slice_nrs= self.sampler.sample_testdata_batch(batch, slice_nr=n)
+                                for (gt ,sample, gt_seg, seg) in zip(gt_recons, sample_recons, gt_segs, sample_segs):
+                                    gts.append(gt)
+                                    samples.append(sample)
+                                    if seg is not None: 
+                                        gts_seg.append(gt_seg)
+                                        samples_seg.append(seg)
+                                    ref = gt[0,...].cpu().numpy()
+                                    sample = sample[0,...].cpu().numpy()
 
-                                mse, psnr, ssim = calculate_metrics(ref, sample, metrics)
-                                mses.append(mse)
-                                psnrs.append(psnr)
-                                ssims.append(ssim)
-                                if seg is not None:
-                                    dice_loss , dice = self.criterion_seg(seg, one_hot(gt_seg, num_classes=4), one_hot_enc=False)
-                                    dices.append(1-dice_loss)
-                                    dices_1.append(dice[0])
-                                    dices_2.append(dice[1])
-                                    dices_3.append(dice[2])
+                                    mse, psnr, ssim = calculate_metrics(ref, sample, metrics)
+                                    mses.append(mse)
+                                    psnrs.append(psnr)
+                                    ssims.append(ssim)
+                                    if seg is not None:
+                                        dice_loss , dice = self.criterion_seg(one_hot(gt_seg[None,...],num_classes=4), seg[None,...], one_hot_enc=False)
+                                        dices.append(1-dice_loss)
+                                        dices_1.append(dice[0])
+                                        dices_2.append(dice[1])
+                                        dices_3.append(dice[2])
 
                         mse = sum(mses) / len(mses)
                         psnr = sum(psnrs) / len(psnrs)
                         ssim = sum(ssims) / len(ssims)
-                        dice = sum(dices) / len(dices)
-                        dice_1 = sum(dices_1) / len(dices_1)
-                        dice_2 = sum(dices_2) / len(dices_2)
-                        dice_3 = sum(dices_3) / len(dices_3)
+                        dice = sum(dices) / len(dices) if seg is not None else 0
+                        dice_1 = sum(dices_1) / len(dices_1) if seg is not None else 0
+                        dice_2 = sum(dices_2) / len(dices_2) if seg is not None else 0
+                        dice_3 = sum(dices_3) / len(dices_3) if seg is not None else 0
                         if self.is_main:
                             wandb.log({
                                 "val_mse_recon" : mse, 
@@ -430,11 +440,11 @@ class Trainer(torch.nn.Module):
                         if seg is not None: 
                             gts_seg = torch.stack(gts_seg, dim=0).squeeze(0)
                             samples_seg = torch.stack(samples_seg, dim=0).squeeze(0)
-                            vid_seg = torch.cat([gts_seg, torch.argmax(samples_seg,dim=1).unsqueeze(0)], dim=-2)
+                            vid_seg = torch.cat([gts_seg, torch.argmax(samples_seg,dim=1).unsqueeze(1)], dim=-2)
                         if self.is_main:
-                            self._videos_to_wandb(vid, "eval_recon")
+                            self._vid_or_image_to_wandb(vid, "eval_recon")
                             if seg is not None: 
-                                self._videos_to_wandb(vid_seg/4, "eval_seg_recon")
+                                self._vid_or_image_to_wandb(vid_seg/4, "eval_seg_recon")
 
 
                 if self.is_main:
@@ -460,5 +470,5 @@ class Trainer(torch.nn.Module):
             **kwargs
         )
         torch.save(state, os.path.join(self.ckpt_dir, name))
-        print(f'Saving checkpoint to {os.path.join(self.ckpt_dir, name)}')
+        self.print(f'Saving checkpoint to {os.path.join(self.ckpt_dir, name)}')
 
