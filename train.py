@@ -8,6 +8,7 @@ def main():
     parser.add_argument("--config", type=str, required=True, help="Path to config file.")
     parser.add_argument("--stage", type=int, required=True, help="stage of the cascading scheme to train")
     parser.add_argument("--three_d", action='store_true', help="if to use 3d data or not")
+    parser.add_argument("--finetune", action="store_true", help="if to finetune the semantic encoder")
     parser.add_argument("--resume", type=str, default="auto")
     parser.add_argument("--bs", type=int, default="-1")
     parser.add_argument("--lr", type=float, default="-1")

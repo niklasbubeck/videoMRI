@@ -58,7 +58,7 @@ class DiffusionAutoEncodersInterface:
         # self.clf_model = self._init_clf_model(clf_ckpt_path)
 
         if self.mode in {'test', 'infer'}:
-            self.sampler = Sampler(self.model, self.config, device='cuda')
+            self.sampler = Sampler(self.model, self.aekl_model, self.config, device='cuda')
             # self.unnormalize = get_torchvision_unnormalize(
             #     self.cfg['test']['dataset'][-1]['params']['mean'],
             #     self.cfg['test']['dataset'][-1]['params']['std'],
@@ -243,6 +243,7 @@ class DiffusionAutoEncodersInterface:
                 state = torch.load(weight_path)
                 model.load_state_dict(state['model'])
             except: # remove "module." from keys (DDP)
+                print("was not able to load state_dict...adapting to ddp")
                 new_state = {}
                 new_state['model'] = {}
                 for k, v in state['model'].items():
@@ -309,7 +310,10 @@ class DiffusionAutoEncodersInterface:
         }
 
         trainer = Trainer(self.model, self.aekl_model, self.config, self.output_dir, self.train_dataset, self.test_dataset, **add_data)
-        trainer.train(self.config.stage)
+        if self.config.finetune:
+            trainer.train_finetune(self.config.stage)
+        else: 
+            trainer.train(self.config.stage)
 
     @torch.inference_mode()
     def test_reconstruction(self):

@@ -746,7 +746,8 @@ class Sampler:
 
         self.model.eval()
         for iter, batch in tqdm(enumerate(test_loader), total=len(test_loader)):
-            fnames, x0, xt, slice_nr, seg = self.sample_testdata_batch(batch)
+            fnames, x0, xt, seg_sa, xt_seg, slice_nr = self.sample_testdata_batch(batch)
+            # fnames, gt_x0, xt, seg_sa, xt_seg, slice_nr
 
             batch_size = xt.shape[0]
 
