@@ -16,6 +16,10 @@ import torchvision
 from einops import rearrange
 from typing import Union
 
+from .models.network_helpers import normalize_neg_one_to_one, unnormalize_zero_to_one
+from .utils import find_bounding_box3D
+
+
 MEAN_SAX_LV_VALUE = 222.7909
 MAX_SAX_VALUE = 487.0
 MEAN_4CH_LV_VALUE = 224.8285
@@ -56,6 +60,8 @@ class UKBB(Dataset):
         self.root_dir = config.dataset.get("data_path", 256)
         self.transforms = transforms
         self.slice_res = config.dataset.get("slice_res", 8)
+        self.normalize = config.dataset.get("normalize", False)
+        self.crop_along_bbox = config.dataset.get("crop_along_bbox", False)
 
 
         self.fnames = []
@@ -67,7 +73,7 @@ class UKBB(Dataset):
             subjects = self.read_subject_numbers(sbj_file)
 
         for subject in tqdm(subjects):
-            if len(self.fnames) >= 5000:
+            if len(self.fnames) >= 100:
                 break
             try:
                 self.fnames += glob.glob(f'{self.root_dir}/{subject}/processed_seg_allax.npz', recursive=True) 
@@ -177,7 +183,9 @@ class UKBB(Dataset):
 
         sa = normalize_image_with_mean_lv_value(sa)
         la = normalize_image_with_mean_lv_value(la)
-       
+
+        h, w, s ,t = sa.shape
+
         # # load the short axis-image
         # sa = self.load_nifti(self.sa_fnames[idx]) # h, w, s, t
         # sa = self.min_max(sa, 0, 1) 
@@ -226,11 +234,33 @@ class UKBB(Dataset):
 
             sa = sa[:, start_slice:end_slice, ...]
             sa_seg = sa_seg[:, start_slice:end_slice, ...]
-        # return dict with each filename 
-        # fnames = dict(
-        #     sa = self.sa_fnames[idx],
-        #     la = self.la_fnames[idx],
-        #     sa_seg = self.seg_fnames[idx]
-        # )
+        
+
+        if self.normalize:
+            sa= normalize_neg_one_to_one(sa)
+            la = normalize_neg_one_to_one(la)
+
+        if self.crop_along_bbox:
+            _, _, ymin, ymax, xmin, xmax = find_bounding_box3D(sa_seg[0,5,...])
+
+            #bounderis to ensure that every crop is target_res x target_res
+            min_x, max_x = self.target_resolution//2, w - self.target_resolution//2
+            min_y, max_y = self.target_resolution//2, h - self.target_resolution//2
+
+            cy, cx = (ymin + ymax)//2, (xmin+xmax)//2
+            cx = max(min(cx, max_x), min_x)
+            cy = max(min(cy, max_y), min_y)
+
+
+            x_top_left = max(0, cx - self.target_resolution // 2)
+            y_top_left = max(0, cy - self.target_resolution // 2)
+            
+            # Calculate the coordinates of the bottom-right corner
+            x_bottom_right = min(w, cx + self.target_resolution // 2)
+            y_bottom_right = min(h, cy + self.target_resolution // 2)
+
+            sa = sa[..., y_top_left:y_bottom_right, x_top_left:x_bottom_right]
+            sa_seg = sa_seg[..., y_top_left:y_bottom_right, x_top_left:x_bottom_right]
+
         fnames = self.fnames[idx]
         return sa, la, sa_seg, fnames

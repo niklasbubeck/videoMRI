@@ -17,7 +17,7 @@ from scipy.ndimage.morphology import distance_transform_edt
 
 
 from .sampler import Sampler
-from .models.network_helpers import resize_video_to
+from .models.network_helpers import resize_video_to, normalize_neg_one_to_one, unnormalize_zero_to_one
 from .models.model import CascadedDiffusionModel
 from .models.loss import SimpleLoss, DiceLoss, SSIMLoss, VideoSSIMLoss, SegmentationCriterion, TemporalGradLoss
 from .utils import Meter, TimestepSampler, get_betas, seed_everything, training_reproducibility_cudnn, vid_to_wandb, calculate_metrics, find_bounding_box3D, center_crop_bbox
@@ -37,10 +37,8 @@ class Trainer(torch.nn.Module):
         self.test_loader = DataLoader(self.test_dataset, self.config.bs, shuffle=False)
 
         self.use_latent = False
-        try: 
-            self.use_latent = self.config.trainer.use_latent
-        except:
-            pass 
+        if self.aekl_model is not None: 
+            self.use_latent = True
 
         self.three_d = self.config.three_d
         self.start_time = kwargs['start_time']
@@ -95,7 +93,10 @@ class Trainer(torch.nn.Module):
         self.num_timesteps = config.trainer.timestep_sampler.num_sample_steps
         self.timestep_sampler = TimestepSampler(config.trainer.timestep_sampler, device=self.device)
 
-        self.sampler = Sampler(model=model, config=config, device=self.device)
+        self.sampler = Sampler(model=model, aekl_model=self.aekl_model, config=config, device=self.device)
+
+        
+        self.aekl_model.eval()
 
         # put everything to correct device 
         self.model.to(self.device)
@@ -109,7 +110,7 @@ class Trainer(torch.nn.Module):
         self.alphas_cumprod = self.alphas_cumprod.to(self.device)
     
     def _images_to_wandb(self, image_array, caption):
-        images = wandb.Image(image_array, caption=caption)
+        images = wandb.Image(image_array.clamp(0,1), caption=caption)
         wandb.log({f"{caption}": images})
 
     def _videos_to_wandb(self, vid, caption):
@@ -120,6 +121,9 @@ class Trainer(torch.nn.Module):
         wandb.log({f"{caption}": vid})
 
     def _vid_or_image_to_wandb(self, vid_img, caption):
+        if self.config.dataset.normalize:
+            vid_img = unnormalize_zero_to_one(vid_img)
+
         if len(vid_img.shape) == 4:
             self._images_to_wandb(vid_img, caption)
         elif len(vid_img.shape) == 5:
@@ -271,7 +275,7 @@ class Trainer(torch.nn.Module):
                     # handling 3d and 2d view
                     view = [1 for i in range(len(sa.shape))]
                     view[0] = -1
-
+                    print("latent: ", self.use_latent)
                     if self.use_latent:
                         sa = self.aekl_model.encode_stage_2_inputs(sa)
                         print("after latent: ", sa.shape)
@@ -281,16 +285,20 @@ class Trainer(torch.nn.Module):
 
                     out_recon, out_seg = self.unet_being_trained(sa, xt, t.float())
                     
-                    if self.use_latent:
-                        out_recon = self.aekl_model.decode_stage_2_inputs(out_recon)
-                        if out_seg is not None:
-                            out_seg = self.aekl_model.decode_stage_2_inputs(out_seg)
 
                     pred_recon = (xt - out_recon * torch.sqrt(1-self.alphas_cumprod[t].view(*view))) / torch.sqrt(self.alphas_cumprod[t].view(*view))
-                    pred_recon = pred_recon.clamp(0,1)
 
                     if out_seg is not None:
                         pred_seg = (xt - out_seg * torch.sqrt(1-self.alphas_cumprod[t].view(*view))) / torch.sqrt(self.alphas_cumprod[t].view(*view))
+                        # pred_seg = F.softmax(pred_seg, dim=1)
+
+                    if self.use_latent:
+                        pred_recon = self.aekl_model.decode_stage_2_outputs(pred_recon)
+                        print(out_recon.shape)
+                        if out_seg is not None:
+                            pred_seg = self.aekl_model.decode_stage_2_outputs(pred_recon)
+
+                    if out_seg is not None: 
                         pred_seg = F.softmax(pred_seg, dim=1)
 
                     if self.is_main and self.iter % 100 == 0:

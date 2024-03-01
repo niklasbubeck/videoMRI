@@ -549,13 +549,19 @@ from .utils import get_betas, calculate_metrics, extract_seven_concurrent_number
 
 
 class Sampler:
-    def __init__(self, model, config, device):
+    def __init__(self, model, aekl_model, config, device):
         """
         Args:
             model: Diffusion Autoencoder model.
             cfg (dict): A dict of config.
         """
         self.model = model
+        self.aekl_model = aekl_model
+        self.use_latent = False
+        if self.aekl_model is not None: 
+            self.aekl_model.eval()
+            self.use_latent = True
+
         self.config = config
 
         self.device = device
@@ -629,6 +635,10 @@ class Sampler:
         x0_inter = x0_inter.to(self.device)
         x0_next = x0_next.to(self.device)
 
+        if self.use_latent:
+            x0_prev = self.aekl_model.encode_stage_2_inputs(x0_prev)
+            x0_next = self.aekl_model.encode_stage_2_inputs(x0_next)
+
         xt_1 = self.encode_stochastic(x0_prev)
         xt_2 = self.encode_stochastic(x0_next)
 
@@ -639,6 +649,11 @@ class Sampler:
         # inter_seg = results['output_seg']
         # if inter_seg is not None: 
         #     inter_seg = inter_seg.unsqueeze(0)
+
+        if self.use_latent:
+            inter_recon = self.aekl_model.decode_stage_2_outputs(inter_recon)
+            if inter_seg is not None:
+                inter_seg = self.aekl_model.decode_stage_2_outputs(inter_seg)
 
         subject = extract_seven_concurrent_numbers(fnames[0])[0]
         return subject, x0_inter, inter_recon, seg_sa, inter_seg, slice_nr
@@ -680,6 +695,7 @@ class Sampler:
         if slice_nr == "rand":
             slice_nr = np.random.randint(0 , batch[0].shape[2])
         x0, _, seg_sa, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=slice_nr)
+        gt_x0 = x0.clone().detach()
 
         x0 = x0.to(self.device)
         batch_size = x0.shape[0]
@@ -689,17 +705,12 @@ class Sampler:
         if len(x0.shape) == 5:
             dim = 4
 
-        xt = self.encode_stochastic(x0, disable_tqdm=False)
-        # xt = torch.randn_like(xt)
+        if self.use_latent:
+            x0 = self.aekl_model.encode_stage_2_inputs(x0)
 
-        # videos = rearrange(xt.detach().cpu(), 'b c t h w -> t h (b w) c') # type: ignore
-        # videos = (videos*255).numpy().astype(np.uint8)
-        # videos = [Image.fromarray(i[...,0]) for i in videos]
-        # videos[0].save(os.path.join(f"sample-xt_noisemap.gif"), save_all=True, append_images=videos[1:], duration=1000/10, loop=0)
+        xt = self.encode_stochastic(x0, disable_tqdm=False)
 
         style_emb = self.model.encoder(x0)
-
-        # xt, xt0_recon, xt0_seg = self.sample(xt, embeds=style_emb)
 
         for _t in tqdm(reversed(range(self.num_timesteps)), desc="decoding ..."):
             t = torch.ones(batch_size, dtype=torch.long, device=self.device) * _t
@@ -709,23 +720,19 @@ class Sampler:
             alphas_shape = self.alphas_cumprod[_t].shape
 
             xt_recon = self.equation_twelve(xt, e_recon, t, batch_size, dim)
-            
-            # if _t % 20 == 5:
-            #     videos = rearrange(xt_recon.detach().cpu(), 'b c t h w -> t h (b w) c') # type: ignore
-            #     videos = (videos*255).numpy().astype(np.uint8)
-            #     videos = [Image.fromarray(i[...,0]) for i in videos]
-            #     videos[0].save(os.path.join(f"sample-{str(_t).zfill(10)}.gif"), save_all=True, append_images=videos[1:], duration=1000/10, loop=0)
 
             xt_seg = None
             if e_seg is not None: 
                 xt_seg = self.equation_twelve(xt, e_seg, t, batch_size, dim)
 
             xt = xt_recon
-            # videos = rearrange(xt.detach().cpu(), 'b c t h w -> t h (b w) c') # type: ignore
-            # videos = (videos*255).numpy().astype(np.uint8)
-            # videos = [Image.fromarray(i[...,0]) for i in videos]
-            # videos[0].save(os.path.join(f"sample-final.gif"), save_all=True, append_images=videos[1:], duration=1000/10, loop=0)
-        return fnames, x0, xt, seg_sa, xt_seg, slice_nr
+
+        if self.use_latent:
+            xt = self.aekl_model.decode_stage_2_outputs(xt)
+            if xt_seg is not None:
+                xt_seg = self.aekl_model.decode_stage_2_outputs(xt_seg)
+
+        return fnames, gt_x0, xt, seg_sa, xt_seg, slice_nr
 
 
     def sample_testdata(self, test_dataset, eta=0.0):

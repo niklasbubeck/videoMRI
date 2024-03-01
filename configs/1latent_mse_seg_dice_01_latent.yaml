@@ -11,7 +11,7 @@ unets:
     channels: 3                                               # number of input channels that get trained on 
     channels_out: 3                                           # number of output channels that get trained on 
     cond_on_text: True  # for the style embeds                 # if conditioned on text 
-    seg_dec: False
+    seg_dec: True
 
 encoders: 
   encoder1:
@@ -52,7 +52,7 @@ trainer:
     seg: mse                                           # dice, mse
     recon: mse 
     tgrad: False
-    weight: 1                                        # ssim, mse
+    weight: 0.1                                        # ssim, mse
     tweight: 1
 
   optimizer:
@@ -86,7 +86,7 @@ dataset:
   train_pct: 0.8
   time_idx: null
   mode: random
-  normalize: True
+  normalize: False
   
   train: 
     transforms:

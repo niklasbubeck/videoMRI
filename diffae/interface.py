@@ -51,7 +51,8 @@ class DiffusionAutoEncodersInterface:
         self.model, self.train_days, self.start_time, self.steps = self._init_model(ckpt_path=ckpt_path)
 
         self.aekl_model = self._init_autoenc_kl(ckpt=self.config.trainer.aekl_path, config=self.config.stage1.params)
-        summary(self.aekl_model.cuda(), (1,32,128,128))
+        # summary(self.aekl_model.cuda(), (1,32,128,128))
+        # summary(self.model.cuda(), [(1,10,128,128), (1,10,128,128), (1,1)])
         
         # clf_ckpt_path = self.output_dir / 'ckpt' / args['clf_ckpt'] if 'clf_ckpt' in args else None
         # self.clf_model = self._init_clf_model(clf_ckpt_path)
@@ -100,10 +101,12 @@ class DiffusionAutoEncodersInterface:
 
     def _init_autoenc_kl(self, ckpt, config): 
         # put to device later in the trainer using accelerator
-        model = AutoencoderKL(**config)
-        state = torch.load(ckpt)
-        model.load_state_dict(state['state_dict'], strict=True)
-        model.eval()
+        model = None 
+        if self.config.trainer.use_latent_space:
+            model = AutoencoderKL(**config)
+            state = torch.load(ckpt)
+            model.load_state_dict(state['state_dict'], strict=True)
+            model.eval()
 
         return model
 

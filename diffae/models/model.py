@@ -50,7 +50,6 @@ class BaseModel(nn.Module):
             seg_sa = seg_sa[:, :, :, 0::time_res, ...]
 
         if mode == "random": 
-            print("sa shape: ", sa.shape)
             start_idx = randint(0, sa.shape[3] - time_res -1)
             end_idx = start_idx + time_res
             sa = sa[:, :, :, start_idx:end_idx, ...]
@@ -71,11 +70,6 @@ class BaseModel(nn.Module):
         cond_frames = None
         # cond_frames = [ sa[:, :, slice, time_idx, ...] for slice in cond_slices]
         # cond_frames = torch.cat(cond_frames, dim=1)
-
-        if normalize:
-            sa = normalize_neg_one_to_one(sa)
-            cond_frames = normalize_neg_one_to_one(cond_frames)
-            la = normalize_neg_one_to_one(la)
             
 
         return sa, la, seg_sa, cond_frames, fnames
