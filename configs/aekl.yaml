@@ -1,5 +1,5 @@
 general:
-  exp_name: aekl_s4_l3_b8
+  exp_name: aekl_s3_l3_b8
   network: AEKL
   training_epochs: 250
   eval_freq: 10
@@ -77,8 +77,8 @@ trainer:
         max_beta: 0.999
 
 dataset:
-  data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
-  # data_path: '/ssd2t/ukbb/MedMAE/original'
+#  data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
+  data_path: '/ssd2t/ukbb/MedMAE/original'
   sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
   time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
@@ -92,6 +92,9 @@ dataset:
   cond_slices: [5]
   train_pct: 0.8
   time_idx: null
+  mode: fcfs
+  normalize: False
+  crop_along_bbox: True
   
   train: 
     transforms:
