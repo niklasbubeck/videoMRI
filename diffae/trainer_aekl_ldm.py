@@ -169,7 +169,7 @@ def train_epoch_ldm(
         slc_random = np.random.randint(0 , batch[0].shape[1])
         t_random = np.random.randint(0, 17)
         sa, _, _, fnames = batch
-        images = sa[..., slc_random, ::5, :, :].to(device)
+        images = sa[..., slc_random, ::10, :, :].to(device)
         timesteps = torch.randint(0, scheduler.num_train_timesteps, (images.shape[0],), device=device).long()
 
         optimizer.zero_grad(set_to_none=True)
@@ -230,7 +230,7 @@ def eval_ldm(
     for batch in loader:
         slc_random = batch[0].shape[1]//2
         sa, _, _, fnames = batch
-        images = sa[..., slc_random, ::5, :, :].to(device)
+        images = sa[..., slc_random, ::10, :, :].to(device)
         timesteps = torch.randint(0, scheduler.num_train_timesteps, (images.shape[0],), device=device).long()
 
         with autocast(enabled=True):
