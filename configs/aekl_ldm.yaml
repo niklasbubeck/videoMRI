@@ -2,7 +2,7 @@ general:
   exp_name: Dawn_b2
   network: AEKL_LDM
   training_epochs: 250
-  eval_freq: 10
+  eval_freq: 5
 
 ldm:
   base_lr: 0.000025

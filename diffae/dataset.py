@@ -75,8 +75,8 @@ class UKBB(Dataset):
             subjects = self.read_subject_numbers(sbj_file)
 
         for subject in tqdm(subjects):
-            # if len(self.fnames) >= 100:
-            #     break
+            if len(self.fnames) >= 10000:
+                break
             try:
                 self.fnames += glob.glob(f'{self.root_dir}/{subject}/processed_seg_allax.npz', recursive=True)
                 # self.la_fnames += glob.glob(f'{self.root_dir}/{subject}/la_2ch.nii.gz', recursive=True)
