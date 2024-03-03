@@ -1,6 +1,7 @@
 import argparse
 from diffae.interface import DiffusionAutoEncodersInterface
 from diffae.interface_aekl import AEKLInterface
+from diffae.interface_aekl_ldm import AEKLLDMInterface
 from omegaconf import OmegaConf
 import os 
 
@@ -38,9 +39,12 @@ def main():
 
     if config.general.network == "AEKL":
         interface = AEKLInterface(config, mode='train')
+    elif config.general.network == "AEKL_LDM":
+        interface = AEKLLDMInterface(config, mode='train')
     else:
         # TODO: instead of giving three d or not, let user choose the network to use
         interface = DiffusionAutoEncodersInterface(config, mode='train')
+    
 
     interface.train()
 
