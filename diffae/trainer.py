@@ -50,9 +50,15 @@ class Trainer(torch.nn.Module):
 
         self.optim_state = None
         try: 
-            self.optim_state = kwargs[f'optim{self.config.stage}']
-        except: 
-            pass
+            self.optim_state = kwargs[f'optimizer']
+        except Exception as e: 
+            print("Error when loading optimizer state dict. If this is the begin of the training you can ignore this error: \n ",e)
+
+        self.schedule_state = None 
+        try: 
+            self.schedule_state = kwargs[f'scheduler']
+        except Exception as e : 
+            print("Error when loading optimizer state dict. If this is the begin of the training you can ignore this error: \n ",e)
 
         self.prepared = False
          # init accelerator 
@@ -75,10 +81,16 @@ class Trainer(torch.nn.Module):
         self.print(f'Checkpoints are saved in {self.ckpt_dir}')
         if self.is_main: self._init_wandb(config, self.train_days)
 
+
         self.optimizer = self.get_optimizer()
         if self.optim_state is not None:
             self.print(f"Load Optimizer state dict for stage {self.config.stage}")
             self.optimizer.load_state_dict(self.optim_state)
+
+        self.scheduler = self.get_scheduler(self.optimizer)
+        if self.schedule_state is not None:
+            self.print(f"Load Scheduler state dict for stage {self.config.stage}")
+            self.scheduler.load_state_dict(self.schedule_state)
 
         self.criterion_recon = SimpleLoss() if self.config.trainer.loss.recon == "mse" else VideoSSIMLoss()
         self.criterion_seg = SimpleLoss() if self.config.trainer.loss.seg == "mse" else SegmentationCriterion(type="dice")
@@ -240,6 +252,11 @@ class Trainer(torch.nn.Module):
         optimizer = optimizer_cls(self.model.parameters(), **self.config.trainer.optimizer.params)
         return optimizer
     
+    def get_scheduler(self, optimizer):
+        scheduler_cls = getattr(torch.optim.lr_scheduler, self.config.trainer.scheduler.name)
+        scheduler = scheduler_cls(optimizer, **self.config.trainer.scheduler.params)
+        return scheduler
+
     def prepare(self, unet_number): 
         if self.prepared: 
             self.print("Trainer alredy prepared,...moving on")
@@ -326,7 +343,7 @@ class Trainer(torch.nn.Module):
                         loss = loss + grad_t_loss * self.config.trainer.loss.tweight
                     
 
-                if self.is_main: self._one_line_log(steps, loss_recon, loss_seg, len(self.train_loader), self.start_time, additional={"tgrad": grad_t_loss, "learning_rate": self.optimizer.param_groups[0]['lr']})
+                if self.is_main: self._one_line_log(steps, loss_recon, loss_seg, len(self.train_loader), self.start_time, additional={"tgrad": grad_t_loss, "learning_rate": self.optimizer.param_groups[0]['lr'], "lr_sched": self.scheduler.get_last_lr()})
                 self.accelerator.backward(loss)
                 self.optimizer.step()
         
@@ -489,7 +506,7 @@ class Trainer(torch.nn.Module):
                         self.save_ckpt(name=f'ckpt.{self.train_days}.pt', **additional_data)
 
             
-
+            self.scheduler.step()
             epoch_elapsed_time = time.time() - self.epoch_start_time
             self.print(f'Epoch {self.epoch + 1} done. ({epoch_elapsed_time:.1f} sec)')
 
@@ -537,7 +554,7 @@ class Trainer(torch.nn.Module):
                         sem_prev = self.model.encoder(sa_prev)
                         sem_next = self.model.encoder(sa_next)
 
-                    gt_inter = (sem_prev+sem_next) // 2
+                    gt_inter = (sem_prev+sem_next) / 2
                     sem_inter = self.model.encoder(sa_inter)
 
  
@@ -547,7 +564,7 @@ class Trainer(torch.nn.Module):
                     loss = self.criterion_recon(gt_inter, sem_inter)
                     
                     
-                if self.is_main: self._one_line_log(steps, loss, 0, len(self.train_loader), self.start_time, additional={"learning_rate": self.optimizer.param_groups[0]['lr']})
+                if self.is_main: self._one_line_log(steps, loss, 0, len(self.train_loader), self.start_time, additional={"learning_rate": self.optimizer.param_groups[0]['lr'], "lr_sched": self.scheduler.get_last_lr()})
                 self.accelerator.backward(loss)
                 self.optimizer.step()
         
@@ -710,7 +727,7 @@ class Trainer(torch.nn.Module):
                         self.save_ckpt(name=f'ckpt.{self.train_days}.pt', **additional_data)
 
             
-
+            self.scheduler.step()
             epoch_elapsed_time = time.time() - self.epoch_start_time
             self.print(f'Epoch {self.epoch + 1} done. ({epoch_elapsed_time:.1f} sec)')
 
@@ -722,6 +739,7 @@ class Trainer(torch.nn.Module):
             epoch = self.epoch + 1,
             model = self.unet_being_trained.state_dict(),
             optimizer = self.optimizer.state_dict(),
+            scheduler = self.scheduler.state_dict(),
             **kwargs
         )
         torch.save(state, os.path.join(self.ckpt_dir, name))

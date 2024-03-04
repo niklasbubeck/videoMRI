@@ -89,6 +89,8 @@ class DiffusionAutoEncodersInterface:
 
     def _init_output_dir(self):
         output_dir = Path(os.path.join(self.config.checkpoint.path, self.config.checkpoint.exp_name, self.mode))
+        if self.mode == "test":
+            output_dir = Path(os.path.join(output_dir, self.config.interpolation.strat))
 
         # Delete previous experiment if requested
         if self.config.resume == 'overwrite':
@@ -321,7 +323,7 @@ class DiffusionAutoEncodersInterface:
         """
         assert self.mode == 'test'
 
-        print('Evaluation start...')
+        print(f'Evaluation reconstruction start...')
         result = self.sampler.sample_testdata(self.test_dataset)
         with (self.output_dir / 'test.json').open('w') as fp:
             json.dump(result, fp, indent=4, sort_keys=True)
@@ -332,7 +334,7 @@ class DiffusionAutoEncodersInterface:
         """
         assert self.mode == 'test'
 
-        print('Evaluation start...')
+        print(f'Evaluation interpolation start... with strat {self.config.interpolation.strat}')
         result = self.sampler.sample_interpolated_testdata(self.test_dataset)
         with (self.output_dir / 'test.json').open('w') as fp:
             json.dump(result, fp, indent=4, sort_keys=True)

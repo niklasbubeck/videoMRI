@@ -55,6 +55,12 @@ trainer:
     weight: 1                                        # ssim, mse
     tweight: 1
 
+  scheduler:
+    name: ExponentialLR
+    params:
+      gamma: 0.9
+
+
   optimizer:
     name: Adam
     params:

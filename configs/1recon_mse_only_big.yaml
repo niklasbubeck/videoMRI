@@ -60,7 +60,7 @@ trainer:
   scheduler:
     name: ExponentialLR
     params:
-      gamma: 0.9
+      gamma: 0.99
 
   optimizer:
     name: Adam
@@ -93,7 +93,7 @@ dataset:
   train_pct: 0.8
   time_idx: null
   mode: fcfs
-  normalize: False
+  normalize: True
   crop_along_bbox: False
   
   train: 

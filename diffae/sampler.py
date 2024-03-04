@@ -645,7 +645,7 @@ class Sampler:
         style_emb_1 = self.model.encoder(x0_prev)
         style_emb_2 = self.model.encoder(x0_next)
 
-        inter_recon, inter_seg = self.interpolate(xt_1, xt_2, style_emb_1, style_emb_2, alpha=0.5, eta=eta)
+        inter_recon, inter_seg = self.interpolate(xt_1, xt_2, style_emb_1, style_emb_2, alpha=0.5, eta=eta, strat=self.config.interpolation.strat)
         # inter_seg = results['output_seg']
         # if inter_seg is not None: 
         #     inter_seg = inter_seg.unsqueeze(0)
@@ -670,15 +670,16 @@ class Sampler:
 
         self.model.eval()
         for iter, batch in tqdm(enumerate(test_loader), total=len(test_loader)):
-            subject, x0_inter, inter, slice_nr = self.sample_interpolated_testdata_batch(batch, **kwargs)
-            
+            subject, x0_inter, inter, seg_sa, inter_seg, slice_nr = self.sample_interpolated_testdata_batch(batch, **kwargs)
+
             ref = x0_inter[0,0,...].cpu().numpy()
-            sample = inter[0,0,...].cpu().numpy()
+            sample = inter[0,0,...].clamp(0,1).cpu().numpy()
 
             mse, psnr, ssim = calculate_metrics(ref, sample, metrics)
             results = [subject, slice_nr, mse, psnr, ssim]
             df.loc[len(df.index)] = results
-
+            print(results)
+            print("saving to: ", self.output_dir)
             # try to safe the gifs
 
             ref, sample = ref*255, sample*255
@@ -753,7 +754,7 @@ class Sampler:
 
             for i in range(batch_size):
                 ref = x0[i,0,...].cpu().numpy()
-                sample = xt[i,0,...].cpu().numpy()
+                sample = xt[i,0,...].clamp(0,1).cpu().numpy()
                 subject = extract_seven_concurrent_numbers(fnames[i])[0]
                 mse, psnr, ssim = calculate_metrics(ref, sample, keys[2:])
                 results = [subject, slice_nr, mse, psnr, ssim]
@@ -845,7 +846,7 @@ class Sampler:
 
         return xt
 
-    def interpolate(self, xt_1, xt_2, style_emb_1, style_emb_2, alpha, eta=0.0):
+    def interpolate(self, xt_1, xt_2, style_emb_1, style_emb_2, alpha, eta=0.0, strat="sphere"):
         """Interpolation of 2 images.
         """
 
@@ -866,10 +867,21 @@ class Sampler:
 
         self.model.eval()
         batch_size = xt_1.shape[0]
-        xt = (
-            torch.sin((1 - alpha) * theta) * xt_1.flatten() + torch.sin(alpha * theta) * xt_2.flatten()
-        ) / torch.sin(theta)
-        xt = xt.view(-1, *xt_1.shape[1:])
+        
+        if strat == "sphere":
+            xt = (
+                torch.sin((1 - alpha) * theta) * xt_1.flatten() + torch.sin(alpha * theta) * xt_2.flatten()
+            ) / torch.sin(theta)
+            xt = xt.view(-1, *xt_1.shape[1:])
+        elif strat == "linear":
+            xt = (xt_1 + xt_2) / 2
+
+        elif strat == "noised":
+            raise NotImplementedError
+
+        else: 
+            raise NameError("Give me a valid method ... please")
+
         style_emb = (1 - alpha) * style_emb_1 + alpha * style_emb_2
 
         x0_preds_recon = []

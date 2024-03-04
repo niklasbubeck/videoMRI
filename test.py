@@ -36,8 +36,8 @@ def main():
 
 
     interface = DiffusionAutoEncodersInterface(config, mode='test', ckpt_path='/vol/aimspace/users/bubeckn/videoMRI/outputs/diffusion/1recon_mse_only/train/models/ckpt.0.pt')
-    # interface.test_interpolation()
-    interface.test_reconstruction()
+    interface.test_interpolation()
+    # interface.test_reconstruction()
 
 
 if __name__ == '__main__':

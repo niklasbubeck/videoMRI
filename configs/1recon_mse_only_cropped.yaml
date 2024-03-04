@@ -60,7 +60,7 @@ trainer:
   scheduler:
     name: ExponentialLR
     params:
-      gamma: 0.9
+      gamma: 0.99
 
   optimizer:
     name: Adam
@@ -81,9 +81,9 @@ dataset:
   data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
   sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
-  time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
+  time_res: 10 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
   slice_res: 8
-  res: 128 # resolution
+  res: 64 # resolution
   fps: 32 # frames per second
   duration: 1 #seconds
   grayscale: False
@@ -93,8 +93,8 @@ dataset:
   train_pct: 0.8
   time_idx: null
   mode: fcfs
-  normalize: False
-  crop_along_bbox: False
+  normalize: True
+  crop_along_bbox: True
   
   train: 
     transforms:
