@@ -551,7 +551,7 @@ from .utils import get_betas, calculate_metrics, extract_seven_concurrent_number
 
 
 class Sampler:
-    def __init__(self, model, aekl_model, config, device):
+    def __init__(self, model, aekl_model, config, device, num_timesteps=None):
         """
         Args:
             model: Diffusion Autoencoder model.
@@ -570,7 +570,7 @@ class Sampler:
         self.model.to(self.device)
 
         self.output_dir = self.config.output_dir
-        self.num_timesteps = config.trainer.timestep_sampler.num_sample_steps
+        self.num_timesteps = num_timesteps if num_timesteps is not None else self.config.trainer.timestep_sampler.num_sample_steps
         self.betas = get_betas(config)
         self.alphas = 1 - self.betas
         self.alphas_cumprod = self.alphas.cumprod(dim=0).to(self.device)
@@ -581,29 +581,6 @@ class Sampler:
             warnings.simplefilter('ignore')
             self.lpips_fn_alex = lpips.LPIPS(net='alex', verbose=False).to(self.device)
     
-    # def ddpm_sampler(self, xt, e, _t, batch_size, dim, eta=1):
-    #     pred_x0 = (xt - (torch.sqrt(1 - self.alphas_cumprod[_t]).view((batch_size,) + (1,) *dim) * e)) / torch.sqrt(self.alphas_cumprod[_t]).view((batch_size,) + (1,) *dim)
-    #     pred_x0_scaled = pred_x0 * torch.sqrt(self.alphas_cumprod_prev[_t]).view((batch_size,)+ (1,) *dim)
-
-    #     sigma = eta * torch.sqrt((1 - self.alphas_cumprod_prev[_t].view((batch_size,) + (1,) *dim)) / (1 - self.alphas_cumprod[_t].view((batch_size,)  + (1,) *dim))) * torch.sqrt((1-self.alphas_cumprod[_t].view((batch_size,)  + (1,) *dim)) / (self.alphas_cumprod_prev[_t].view((batch_size,)  + (1,) *dim)))
-    #     xt_dir = torch.sqrt(1-self.alphas_cumprod_prev[_t].view((batch_size,) + (1,) *dim) - sigma**2) * e
-
-    #     xt = pred_x0_scaled + xt_dir
-    #     xt = xt if _t ==0 else xt + sigma*torch.randn_like(xt)
-
-    #     return xt
-
-    # def ddim_sampler(self, xt, e, _t, batch_size, dim):
-    #     # Same as ddpm but with eta = 0.0
-
-    #     pred_x0 = xt - torch.sqrt(1-self.alphas_cumprod[_t].view((batch_size,) + (1,) *dim)) * e
-    #     scaled_pred_x0 = pred_x0 * torch.sqrt((self.alphas_cumprod[_t].view((batch_size,) + (1,) *dim)) / self.alphas_cumprod_prev[_t].view((batch_size,) + (1,) *dim))
-
-    #     xt = scaled_pred_x0 + e * torch.sqrt(1 - self.alphas_cumprod_prev[_t].view((batch_size,) + (1,) *dim))
-
-    #     return xt
-    
-
 
     def equation_twelve(self, xt, e, _t, batch_size, dim, eta=0.0, clamp=True):
          # Equation 12 of Denoising Diffusion Implicit Models

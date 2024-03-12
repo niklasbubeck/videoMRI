@@ -271,10 +271,10 @@ class Trainer(torch.nn.Module):
             return 
 
     @torch.no_grad()
-    def evalutate_train(self, model, mode="interpolation", metrics=["mse", "psnr", "ssim"]):
+    def evalutate_train(self, model, mode="interpolation", metrics=["mse", "psnr", "ssim"], num_timesteps=1000):
         assert mode in ["interpolation", "reconstruction"], f"Given mode is not known: {mode}"
-        key_prefix = f"val/{mode}"
-        sampler = Sampler(model=model, aekl_model=self.aekl_model, config=self.config, device=self.device)
+        key_prefix = f"val/{mode}/{num_timesteps}"
+        sampler = Sampler(model=model, aekl_model=self.aekl_model, config=self.config, device=self.device, num_timesteps=num_timesteps)
         fcn = sampler.sample_testdata_batch if mode == "reconstruction" else sampler.sample_interpolated_testdata_batch
 
         mses, psnrs, ssims, gts, dices, dices_1, dices_2, dices_3, samples, gts_seg, samples_seg = [], [], [], [], [], [], [], [], [], [], []
@@ -315,9 +315,9 @@ class Trainer(torch.nn.Module):
             vid_seg = torch.cat([gts_seg, torch.argmax(samples_seg, dim=1).unsqueeze(1)], dim=1)
 
         if self.is_main:
-            self._vid_or_image_to_wandb(vid, mode)
+            self._vid_or_image_to_wandb(vid, key_prefix)
             if seg is not None:
-                self._vid_or_image_to_wandb(vid_seg / 4, mode)
+                self._vid_or_image_to_wandb(vid_seg / 4, key_prefix)
 
         metrics = {f"{key_prefix}/mse": sum(mses) / len(mses),
                    f"{key_prefix}/psnr": sum(psnrs) / len(psnrs),
@@ -385,9 +385,9 @@ class Trainer(torch.nn.Module):
 
                     if self.is_main and self.iter % 1000 == 0:
                         vid_recon = torch.cat([gt_sa, pred_recon], dim=-2)
-                        self._vid_or_image_to_wandb(vid_recon, 'train_recon')
+                        self._vid_or_image_to_wandb(vid_recon, f'train_recon')
                         vid_noise = torch.cat([sa, xt, noise_img, out_recon])
-                        self._vid_or_image_to_wandb(vid_noise, "train_noise")
+                        self._vid_or_image_to_wandb(vid_noise, f"train_noise")
                         if out_seg is not None:
                             vid_seg = torch.cat([sa_seg, torch.argmax(pred_seg, dim=1).unsqueeze(1)], dim=-2)
                             self._vid_or_image_to_wandb(vid_seg/4, "train_seg")
@@ -415,7 +415,8 @@ class Trainer(torch.nn.Module):
 
                 
                 if (steps + 1) % self.log_interval == 0:
-                    self.evalutate_train(self.ema_model.ema_model, mode="reconstruction")
+                    self.evalutate_train(self.ema_model.ema_model, mode="reconstruction", num_timesteps=100)
+                    self.evalutate_train(self.ema_model.ema_model, mode="reconstruction", num_timesteps=500)
 
                 if self.is_main:
                     if (steps + 1) % self.save_interval == 0:
