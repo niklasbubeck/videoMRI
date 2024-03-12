@@ -14,6 +14,7 @@ import torch.nn.functional as F
 from monai.networks.utils import one_hot
 from generative.networks.nets import AutoencoderKL
 from scipy.ndimage.morphology import distance_transform_edt
+from ema_pytorch import EMA
 
 
 from .sampler import Sampler
@@ -25,16 +26,17 @@ from .sampler import Sampler
 from .models.network_helpers import unnormalize_zero_to_one, normalize_neg_one_to_one
 
 class Trainer(torch.nn.Module):
-    def __init__(self, model, aekl_model, config, output_dir, train_dataset, test_dataset, split_batches=True, **kwargs):
+    def __init__(self, ema_model, model, aekl_model, config, output_dir, train_dataset, test_dataset, split_batches=True, **kwargs):
         super().__init__()
         self.model = model
+        self.ema_model = ema_model
         self.aekl_model = aekl_model
         self.config = config
         self.output_dir = output_dir
         self.train_dataset = train_dataset
-        self.train_loader = DataLoader(self.train_dataset, self.config.bs)
+        self.train_loader = DataLoader(self.train_dataset, self.config.bs, num_workers=16)
         self.test_dataset = test_dataset
-        self.test_loader = DataLoader(self.test_dataset, self.config.bs, shuffle=False)
+        self.test_loader = DataLoader(self.test_dataset, self.config.bs, num_workers=16, shuffle=False)
 
         self.use_latent = False
         if self.aekl_model is not None: 
@@ -105,8 +107,6 @@ class Trainer(torch.nn.Module):
         self.num_timesteps = config.trainer.timestep_sampler.num_sample_steps
         self.timestep_sampler = TimestepSampler(config.trainer.timestep_sampler, device=self.device)
 
-        self.sampler = Sampler(model=model, aekl_model=self.aekl_model, config=config, device=self.device)
-
         if self.aekl_model is not None: 
             self.aekl_model.eval()
 
@@ -134,12 +134,15 @@ class Trainer(torch.nn.Module):
         wandb.log({f"{caption}": vid})
 
     def _vid_or_image_to_wandb(self, vid_img, caption):
+        print("vid_img shape: ", vid_img.shape)
         if self.config.dataset.normalize:
             vid_img = unnormalize_zero_to_one(vid_img)
-
+        if len(vid_img.shape) == 3:
+            vid_img = vid_img.unsqueeze(-3)
         if len(vid_img.shape) == 4:
-            self._images_to_wandb(vid_img, caption)
-        elif len(vid_img.shape) == 5:
+            vid_img = vid_img.unsqueeze(-3)
+            # self._images_to_wandb(vid_img, caption)
+        if len(vid_img.shape) == 5:
             self._videos_to_wandb(vid_img, caption)
         else: 
             raise Exception("given shape of data cannot be handled")
@@ -225,6 +228,7 @@ class Trainer(torch.nn.Module):
         xt = torch.sqrt(alpha_t) * input + torch.sqrt(1.0 - alpha_t) * noise_img
         return xt , t_img, noise_img
 
+
     def _one_line_log(self, cur_step, loss_recon, loss_seg, batch_per_epoch, start_time, validation=False, **additional):
         s_step = f'Step: {cur_step:<6}'
         s_loss = f'Loss: {loss_recon + loss_seg:<6.4f}' if not validation else f'Val loss: {loss_recon + loss_seg:<6.4f}'
@@ -265,7 +269,67 @@ class Trainer(torch.nn.Module):
             self.unet_being_trained, self.train_loader, self.optimizer, self.test_loader = self.accelerator.prepare(self.model, self.train_loader, self.optimizer, self.test_loader)
             self.prepared = True
             return 
-        
+
+    @torch.no_grad()
+    def evalutate_train(self, model, mode="interpolation", metrics=["mse", "psnr", "ssim"]):
+        assert mode in ["interpolation", "reconstruction"], f"Given mode is not known: {mode}"
+        key_prefix = f"val/{mode}"
+        sampler = Sampler(model=model, aekl_model=self.aekl_model, config=self.config, device=self.device)
+        fcn = sampler.sample_testdata_batch if mode == "reconstruction" else sampler.sample_interpolated_testdata_batch
+
+        mses, psnrs, ssims, gts, dices, dices_1, dices_2, dices_3, samples, gts_seg, samples_seg = [], [], [], [], [], [], [], [], [], [], []
+        # get interpolation results
+        for iter, batch in tqdm(enumerate(self.test_loader), disable=self.disable_tqdm):
+            if iter >= 1:
+                break
+            for slice_nr in [5]:
+                subjects, gt_recons, sample_recons, gt_segs, sample_segs, _ = fcn(batch, slice_nr=slice_nr)
+
+                gt_segs = [None] * gt_recons.shape[0] if gt_segs is None else gt_segs
+                sample_segs = [None] * gt_recons.shape[0] if sample_segs is None else sample_segs
+                for gt, sample, gt_seg, seg in zip(gt_recons, sample_recons, gt_segs, sample_segs):
+                    mses.append(calculate_metrics(gt[0].cpu().numpy(), sample[0].cpu().numpy(), metrics=["mse"])[0])
+                    psnrs.append(calculate_metrics(gt[0].cpu().numpy(), sample[0].cpu().numpy(), metrics=["psnr"])[0])
+                    ssims.append(calculate_metrics(gt[0].cpu().numpy(), sample[0].cpu().numpy(), metrics=["ssim"])[0])
+
+                    if seg is not None:
+                        seg = seg[0].cpu().numpy()
+                        dice_loss, dice = self.criterion_seg(one_hot(gt_seg.squeeze(0), num_classes=4), seg)
+                        dices.append(1 - dice_loss.item())
+                        dices_1.append(dice[0].item())
+                        dices_2.append(dice[1].item())
+                        dices_3.append(dice[2].item())
+
+                    gts.append(gt)
+                    samples.append(sample)
+
+                    if seg is not None:
+                        gts_seg.append(gt_seg)
+                        samples_seg.append(seg)
+
+        vid = torch.cat([torch.stack(gts, dim=0), torch.stack(samples, dim=0)], dim=-2)
+
+        if seg is not None:
+            gts_seg = torch.stack(gts_seg, dim=0).squeeze(0)
+            samples_seg = torch.stack(samples_seg, dim=0).squeeze(0)
+            vid_seg = torch.cat([gts_seg, torch.argmax(samples_seg, dim=1).unsqueeze(1)], dim=1)
+
+        if self.is_main:
+            self._vid_or_image_to_wandb(vid, mode)
+            if seg is not None:
+                self._vid_or_image_to_wandb(vid_seg / 4, mode)
+
+        metrics = {f"{key_prefix}/mse": sum(mses) / len(mses),
+                   f"{key_prefix}/psnr": sum(psnrs) / len(psnrs),
+                   f"{key_prefix}/ssim": sum(ssims) / len(ssims)}
+        if seg is not None:
+            metrics.update({
+                f"{key_prefix}/dice_inter": sum(dices) / len(dices),
+                f"{key_prefix}/dice_1": sum(dices_1) / len(dices_1),
+                f"{key_prefix}/dice_2": sum(dices_2) / len(dices_2),
+                f"{key_prefix}/dice_3": sum(dices_3) / len(dices_3)})
+        if self.is_main:
+            wandb.log({**metrics, "step": self.steps, "epoch": self.steps // len(self.train_loader), "mvid": self.steps * self.config.bs / 1e6})
 
     def train(self, unet_number=0):
         torch.autograd.set_detect_anomaly(True)
@@ -287,13 +351,13 @@ class Trainer(torch.nn.Module):
                 steps += 1
                 self.optimizer.zero_grad()
                 with torch.cuda.amp.autocast(enabled=self.fp16):
-                    random = np.random.randint(0 , batch[0].shape[2])
+                    random = None #np.random.randint(0 , batch[0].shape[2])
                     sa, _, sa_seg, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random, unet_number=unet_number)
+                    sa , idx = batch['img'], batch['index']
                     gt_sa = sa.detach().clone()
                     # handling 3d and 2d view
                     view = [1 for i in range(len(sa.shape))]
                     view[0] = -1
-                    print("latent: ", self.use_latent)
                     if self.use_latent:
                         sa = self.aekl_model.encode_stage_2_inputs(sa)
                         print("after latent: ", sa.shape)
@@ -319,10 +383,10 @@ class Trainer(torch.nn.Module):
                     if out_seg is not None: 
                         pred_seg = F.softmax(pred_seg, dim=1)
 
-                    if self.is_main and self.iter % 100 == 0:
+                    if self.is_main and self.iter % 1000 == 0:
                         vid_recon = torch.cat([gt_sa, pred_recon], dim=-2)
                         self._vid_or_image_to_wandb(vid_recon, 'train_recon')
-                        vid_noise = torch.cat([xt, noise_img, out_recon])
+                        vid_noise = torch.cat([sa, xt, noise_img, out_recon])
                         self._vid_or_image_to_wandb(vid_noise, "train_noise")
                         if out_seg is not None:
                             vid_seg = torch.cat([sa_seg, torch.argmax(pred_seg, dim=1).unsqueeze(1)], dim=-2)
@@ -346,156 +410,12 @@ class Trainer(torch.nn.Module):
                 if self.is_main: self._one_line_log(steps, loss_recon, loss_seg, len(self.train_loader), self.start_time, additional={"tgrad": grad_t_loss, "learning_rate": self.optimizer.param_groups[0]['lr'], "lr_sched": self.scheduler.get_last_lr()})
                 self.accelerator.backward(loss)
                 self.optimizer.step()
+                self.ema_model.update()
         
 
-                # Udpate the logging stuff 
-                metrics=["mse", "psnr", "ssim"]
+                
                 if (steps + 1) % self.log_interval == 0:
-                    with torch.no_grad():
-                        mses=[]
-                        psnrs=[]
-                        ssims=[]
-                        gts = []
-                        dices = []
-                        dices_1=[]
-                        dices_2=[]
-                        dices_3=[]
-                        samples = []
-                        gts_seg=[]
-                        samples_seg=[]
-                        # get interpolation results
-                        for iter, batch in tqdm(enumerate(self.test_loader), disable=self.disable_tqdm):
-                            if iter >=1:
-                                break
-                            for n in [5]:
-                                subjects, gt_recons, sample_recons, gt_segs, sample_segs, slice_nrs = self.sampler.sample_interpolated_testdata_batch(batch, metrics=metrics, slice_nr=n)
-                                if sample_segs is None: 
-                                    sample_segs = [None] * gt_segs.shape[0]
-                                for (gt ,sample, gt_seg, seg) in zip(gt_recons, sample_recons, gt_segs, sample_segs):
-                                    gts.append(gt)
-                                    samples.append(sample)
-                                    if seg is not None: 
-                                        gts_seg.append(gt_seg)
-                                        samples_seg.append(seg)
-                                    ref = gt[0,...].cpu().numpy()
-                                    sample = sample[0,...].cpu().numpy()
-
-                                    mse, psnr, ssim = calculate_metrics(ref, sample, metrics)
-                                    mses.append(mse)
-                                    psnrs.append(psnr)
-                                    ssims.append(ssim)
-                                    if seg is not None:
-                                        dice_loss , dice = self.criterion_seg(one_hot(gt_seg[None,...],num_classes=4), seg[None,...], one_hot_enc=False)
-                                        dices.append(1 - dice_loss)
-                                        dices_1.append(dice[0])
-                                        dices_2.append(dice[1])
-                                        dices_3.append(dice[2])
-                        gts = torch.stack(gts, dim=0).squeeze(0)
-                        samples = torch.stack(samples, dim=0).squeeze(0)
-                        vid = torch.cat([gts, samples], dim=-2)
-                        if seg is not None: 
-                            gts_seg = torch.stack(gts_seg, dim=0).squeeze(0)
-                            samples_seg = torch.stack(samples_seg, dim=0).squeeze(0)
-                            vid_seg = torch.cat([gts_seg, torch.argmax(samples_seg,dim=1).unsqueeze(1)], dim=-2)
-                        if self.is_main:
-                            self._vid_or_image_to_wandb(vid, "eval_inter")
-                            if seg is not None: 
-                                self._vid_or_image_to_wandb(vid_seg/4, "eval_seg_inter")
-
-                        mse = sum(mses) / len(mses)
-                        psnr = sum(psnrs) / len(psnrs)
-                        ssim = sum(ssims) / len(ssims)
-                        dice = sum(dices) / len(dices) if seg is not None else 0
-                        dice_1 = sum(dices_1) / len(dices_1) if seg is not None else 0
-                        dice_2 = sum(dices_2) / len(dices_2) if seg is not None else 0
-                        dice_3 = sum(dices_3) / len(dices_3) if seg is not None else 0
-                        if self.is_main:
-                            wandb.log({
-                                "val_mse_inter" : mse, 
-                                "val_psnr_inter" : psnr,
-                                "val_ssim_inter" : ssim, 
-                                "val_dice_inter" : dice,
-                                "val_dice_inter_1" : dice_1,
-                                "val_dice_inter_2" : dice_2,
-                                "val_dice_inter_3" : dice_3,
-                                "step": steps, 
-                                "epoch": steps//len(self.train_loader), 
-                                "mvid": steps*self.config.bs/1e6
-                            })
-
-
-                        mses=[]
-                        psnrs=[]
-                        ssims=[]
-                        dices=[]
-                        dices_1=[]
-                        dices_2=[]
-                        dices_3=[]
-                        gts=[]
-                        samples=[]
-                        gts_seg=[]
-                        samples_seg=[]
-                        # get reconstruction results
-                        for iter, batch in tqdm(enumerate(self.test_loader), disable=self.disable_tqdm):
-                            if iter >=1:
-                                break 
-                            for n in [5]:
-                                subjects, gt_recons, sample_recons, gt_segs, sample_segs, slice_nrs= self.sampler.sample_testdata_batch(batch, slice_nr=n)
-                                if sample_segs is None: 
-                                    sample_segs = [None] * gt_segs.shape[0]
-                                for (gt ,sample, gt_seg, seg) in zip(gt_recons, sample_recons, gt_segs, sample_segs):
-                                    gts.append(gt)
-                                    samples.append(sample)
-                                    if seg is not None: 
-                                        gts_seg.append(gt_seg)
-                                        samples_seg.append(seg)
-                                    ref = gt[0,...].cpu().numpy()
-                                    sample = sample[0,...].cpu().numpy()
-
-                                    mse, psnr, ssim = calculate_metrics(ref, sample, metrics)
-                                    mses.append(mse)
-                                    psnrs.append(psnr)
-                                    ssims.append(ssim)
-                                    if seg is not None:
-                                        dice_loss , dice = self.criterion_seg(one_hot(gt_seg[None,...],num_classes=4), seg[None,...], one_hot_enc=False)
-                                        dices.append(1-dice_loss)
-                                        dices_1.append(dice[0])
-                                        dices_2.append(dice[1])
-                                        dices_3.append(dice[2])
-
-                        mse = sum(mses) / len(mses)
-                        psnr = sum(psnrs) / len(psnrs)
-                        ssim = sum(ssims) / len(ssims)
-                        dice = sum(dices) / len(dices) if seg is not None else 0
-                        dice_1 = sum(dices_1) / len(dices_1) if seg is not None else 0
-                        dice_2 = sum(dices_2) / len(dices_2) if seg is not None else 0
-                        dice_3 = sum(dices_3) / len(dices_3) if seg is not None else 0
-                        if self.is_main:
-                            wandb.log({
-                                "val_mse_recon" : mse, 
-                                "val_psnr_recon" : psnr,
-                                "val_ssim_recon" : ssim, 
-                                "val_dice_recon" : dice,
-                                "val_dice_recon_1" : dice_1,
-                                "val_dice_recon_2" : dice_2,
-                                "val_dice_recon_3" : dice_3,
-                                "step": steps, 
-                                "epoch": steps//len(self.train_loader), 
-                                "mvid": steps*self.config.bs/1e6
-                            })
-
-                        gts = torch.stack(gts, dim=0).squeeze(0)
-                        samples = torch.stack(samples, dim=0).squeeze(0)
-                        vid = torch.cat([gts, samples], dim=-2)
-                        if seg is not None: 
-                            gts_seg = torch.stack(gts_seg, dim=0).squeeze(0)
-                            samples_seg = torch.stack(samples_seg, dim=0).squeeze(0)
-                            vid_seg = torch.cat([gts_seg, torch.argmax(samples_seg,dim=1).unsqueeze(1)], dim=-2)
-                        if self.is_main:
-                            self._vid_or_image_to_wandb(vid, "eval_recon")
-                            if seg is not None: 
-                                self._vid_or_image_to_wandb(vid_seg/4, "eval_seg_recon")
-
+                    self.evalutate_train(self.ema_model.ema_model, mode="reconstruction")
 
                 if self.is_main:
                     if (steps + 1) % self.save_interval == 0:
@@ -737,6 +657,7 @@ class Trainer(torch.nn.Module):
     def save_ckpt(self, name, **kwargs):
         state = dict(
             epoch = self.epoch + 1,
+            ema_model = self.ema_model.state_dict(),
             model = self.unet_being_trained.state_dict(),
             optimizer = self.optimizer.state_dict(),
             scheduler = self.scheduler.state_dict(),

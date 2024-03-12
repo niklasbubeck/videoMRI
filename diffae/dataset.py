@@ -9,6 +9,8 @@ import torch
 from torch.utils.data import Dataset
 from torchvision import transforms
 from scipy.ndimage import zoom
+import lmdb
+import pickle
 import cv2
 import re
 from tqdm import tqdm
@@ -48,6 +50,52 @@ def normalize_image_with_mean_lv_value(im: Union[np.ndarray, torch.Tensor], mean
     im = im / (mean_value / target_value)
     im = im.clip(min=0.0, max=1.0)
     return im
+
+class UKBB_lmdb(Dataset):
+    def __init__(self,
+                 config,
+                 path=os.path.expanduser('/vol/aimspace/users/bubeckn/diffae/datasets/ukbb_MedMAE.lmdb'),
+                 transforms=None,
+                 ):
+        self.env = lmdb.open(
+            path,
+            max_readers=32,
+            readonly=True,
+            lock=False,
+            readahead=False,
+            meminit=False,
+        )
+        self.config = config
+        self.transforms = transforms
+        self.slice_res = 8
+        if not self.env:
+            raise IOError('Cannot open lmdb dataset', path)
+
+        with self.env.begin(write=False) as txn:
+            self.length = int(
+                txn.get('length'.encode('utf-8')).decode('utf-8'))
+
+    def __len__(self):
+        return self.length
+    
+
+    def __getitem__(self, index):
+        with self.env.begin(write=False) as txn:
+
+            key = f'{str(index).zfill(5)}'.encode(
+            'utf-8')
+            temp = txn.get(key)
+            npz = pickle.loads(temp)
+            sa = npz['sa']
+            sa = torch.from_numpy(sa).unsqueeze(0).type(torch.float)         # c, h ,w
+
+            # sa = torch.repeat_interleave(sa, 3, dim=0)
+            if self.config.dataset.normalize:
+                sa = sa * 2 - 1
+
+            if self.transforms:
+                sa = self.transforms(sa)
+        return {'img': sa, 'index': index}
 
 class UKBB(Dataset):
 

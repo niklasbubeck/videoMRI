@@ -35,9 +35,9 @@ def main():
             config.imagen.timesteps = args.steps
 
 
-    interface = DiffusionAutoEncodersInterface(config, mode='test', ckpt_path='/vol/aimspace/users/bubeckn/videoMRI/outputs/diffusion/1recon_mse_only/train/models/ckpt.0.pt')
-    interface.test_interpolation()
-    # interface.test_reconstruction()
+    interface = DiffusionAutoEncodersInterface(config, mode='test', ckpt_path='/vol/aimspace/users/bubeckn/videoMRI/outputs/diffusion/dmcvr2/train/models/ckpt.1.pt')
+    #interface.test_interpolation()
+    interface.test_reconstruction()
 
 
 if __name__ == '__main__':

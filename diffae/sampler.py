@@ -11,7 +11,9 @@ import sys
 from einops import rearrange
 from PIL import Image
 from matplotlib import pyplot as plt
+import cv2
 
+from .models.network_helpers import resize_video_to, normalize_neg_one_to_one, unnormalize_zero_to_one
 from .utils import get_betas, calculate_metrics, extract_seven_concurrent_numbers
 
 
@@ -601,12 +603,17 @@ class Sampler:
 
     #     return xt
     
-    def equation_twelve(self, xt, e, _t, batch_size, dim, eta=0.0):
+
+
+    def equation_twelve(self, xt, e, _t, batch_size, dim, eta=0.0, clamp=True):
          # Equation 12 of Denoising Diffusion Implicit Models
         x0_t = (
             torch.sqrt(1.0 / self.alphas_cumprod[_t]).view((batch_size,) + (1,) *dim) * xt
             - torch.sqrt(1.0 / self.alphas_cumprod[_t] - 1).view((batch_size,)+ (1,) *dim) * e
-        ).clamp(-1, 1)
+        )
+
+        if clamp:
+            x0_t = x0_t.clamp(-1, 1)
         e = (
             (torch.sqrt(1.0 / self.alphas_cumprod[_t]).view((batch_size,) + (1,) *dim) * xt - x0_t)
             / (torch.sqrt(1.0 / self.alphas_cumprod[_t] - 1).view((batch_size,)+ (1,) *dim))
@@ -614,7 +621,7 @@ class Sampler:
         sigma = (
             eta
             * torch.sqrt((1 - self.alphas_cumprod_prev[_t]) / (1 - self.alphas_cumprod[_t]))
-            / torch.sqrt((1 - self.alphas_cumprod[_t]) / self.alphas_cumprod_prev[_t])
+            * torch.sqrt((1 - self.alphas_cumprod[_t]) / self.alphas_cumprod_prev[_t])
         )
         xt = (
             torch.sqrt(self.alphas_cumprod_prev[_t]).view((batch_size,) + (1,) *dim) * x0_t
@@ -694,7 +701,7 @@ class Sampler:
 
     def sample_testdata_batch(self, batch, eta=0.0, slice_nr="rand"):
         if slice_nr == "rand":
-            slice_nr = np.random.randint(0 , batch[0].shape[2])
+            slice_nr = None # np.random.randint(0 , batch[0].shape[2])
         x0, _, seg_sa, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=slice_nr)
         gt_x0 = x0.clone().detach()
 
@@ -710,6 +717,7 @@ class Sampler:
             x0 = self.aekl_model.encode_stage_2_inputs(x0)
 
         xt = self.encode_stochastic(x0, disable_tqdm=False)
+        # xt = torch.randn_like(x0)
 
         style_emb = self.model.encoder(x0)
 
@@ -718,9 +726,23 @@ class Sampler:
             t = t.type(torch.long)
 
             e_recon, e_seg = self.model.unet(xt, t, text_embeds=style_emb)
-            alphas_shape = self.alphas_cumprod[_t].shape
 
             xt_recon = self.equation_twelve(xt, e_recon, t, batch_size, dim)
+            # xt_recon = self.ddim_sampler(xt, e_recon, t, batch_size, dim)
+            # assert torch.allclose(xt_test, xt_recon), f"difference is {abs(xt_test - xt_recon).mean()}"
+            # if _t % 50 == 0:
+            #     output_dir_path = os.path.join(self.output_dir, "videos", "interpolation")
+            #     if not os.path.exists(output_dir_path):
+            #         os.makedirs(output_dir_path)
+            #     print(xt_recon.shape)
+            #     output_images = xt_recon.cpu().numpy().transpose(0, 2, 3, 1)
+            #     for i in range(batch_size):
+            #         im = output_images[i]
+            #         im = np.clip(im, 0, 1)
+            #         im = (255 * im[:, :, 0]).astype(np.uint8)
+            #         im = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
+            #         plt.imsave(os.path.join(output_dir_path, f"recon_{_t}_{i:04d}.png"), im)
+
 
             xt_seg = None
             if e_seg is not None: 
@@ -749,19 +771,23 @@ class Sampler:
         for iter, batch in tqdm(enumerate(test_loader), total=len(test_loader)):
             fnames, x0, xt, seg_sa, xt_seg, slice_nr = self.sample_testdata_batch(batch)
             # fnames, gt_x0, xt, seg_sa, xt_seg, slice_nr
-
+            print(x0.shape)
             batch_size = xt.shape[0]
 
             for i in range(batch_size):
-                ref = x0[i,0,...].cpu().numpy()
-                sample = xt[i,0,...].clamp(0,1).cpu().numpy()
-                subject = extract_seven_concurrent_numbers(fnames[i])[0]
+                ref = x0[i,...].cpu().numpy()
+                sample = xt[i,...].cpu().numpy()
+                subject = "1234567"#extract_seven_concurrent_numbers(fnames[i])[0]
                 mse, psnr, ssim = calculate_metrics(ref, sample, keys[2:])
                 results = [subject, slice_nr, mse, psnr, ssim]
+                print(results)
                 df.loc[len(df.index)] = results
 
                 # try to safe the gifs
+                ref, sample = unnormalize_zero_to_one(ref), unnormalize_zero_to_one(sample)
                 
+                print(ref.min(), ref.max(), sample.min(), sample.max())
+
                 ref, sample = ref*255, sample*255
                 os.makedirs(os.path.join(self.output_dir, "videos", "reconstruction", subject), exist_ok=True)
                 videos = [Image.fromarray(image) for image in sample.astype(np.uint8)]
@@ -813,7 +839,7 @@ class Sampler:
         }
         return result
 
-    def encode_stochastic(self, x0, disable_tqdm=False):
+    def encode_stochastic(self, x0, disable_tqdm=False, clamp=True):
 
         batch_size = x0.shape[0]
         if len(x0.shape) == 4:
@@ -831,8 +857,9 @@ class Sampler:
             x0_t = (
                 torch.sqrt(1.0 / self.alphas_cumprod[t]).view((batch_size,) + (1,) *dim) * xt
                 - torch.sqrt(1.0 / self.alphas_cumprod[t] - 1).view((batch_size,)  + (1,) *dim) * e_recon
-            ).clamp(-1, 1)
-            
+            )
+            if clamp:
+                x0_t = x0_t.clamp(-1, 1)
             # Usually our model outputs epsilon, but we re-derive it
             # in case we used x_start or x_prev prediction. (from original)
             e = (

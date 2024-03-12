@@ -5,6 +5,8 @@ import os
 import shutil
 from pathlib import Path
 from collections import OrderedDict
+from ema_pytorch import EMA
+
 
 from accelerate import Accelerator, DistributedType, DistributedDataParallelKwargs
 
@@ -17,7 +19,7 @@ from generative.networks.nets import AutoencoderKL
 from torchsummary import summary
 
 from .classifier import ClassifierTrainer, LinearClassifier, evaluate_classifier
-from .dataset import UKBB, get_torchvision_transforms
+from .dataset import UKBB, get_torchvision_transforms, UKBB_lmdb
 from .models.model import DiffusionAutoEncoders, DiffusionAutoEncoders3D, CascadedDiffusionModel
 from .sampler import Sampler
 from .trainer import Trainer
@@ -48,7 +50,7 @@ class DiffusionAutoEncodersInterface:
         self.output_dir = self._init_output_dir()
         self.config.output_dir = self.output_dir
 
-        self.model, self.train_days, self.start_time, self.steps = self._init_model(ckpt_path=ckpt_path)
+        self.ema_model, self.model, self.train_days, self.start_time, self.steps = self._init_model(ckpt_path=ckpt_path)
 
         self.aekl_model = self._init_autoenc_kl(ckpt=self.config.trainer.aekl_path, config=self.config.stage1.params)
         # summary(self.aekl_model.cuda(), (1,32,128,128))
@@ -217,12 +219,15 @@ class DiffusionAutoEncodersInterface:
         else:
             model = DiffusionAutoEncoders(self.config.encoders.encoder1, self.config.unets.unet1)
 
+        ema_model = EMA(model, **self.config.trainer.ema)
+
         # if specifically known as for inference
         if ckpt_path is not None: 
             print(f"Attempting to load from given checkpoint: {ckpt_path}")
+            state = torch.load(ckpt_path)
             try:
-                state = torch.load(ckpt_path)
                 model.load_state_dict(state['model'])
+                ema_model.load_state_dict(state['ema_model'])
             except: # remove "module." from keys (DDP)
                 print("was not able to load state_dict...adapting to ddp")
                 new_state = {}
@@ -231,8 +236,11 @@ class DiffusionAutoEncodersInterface:
                     name = k[7:] # remove `module.`
                     new_state['model'][name] = v
                 model.load_state_dict(new_state['model'])
+                ema_model.load_state_dict(state['ema_model'])
             train_days = int(ckpt_path.split(".")[1])+1 # format is ckpt.X.pt
             start_time = time.time() - state['time_elapsed']
+            total_params = sum(p.numel() for p in model.parameters())
+            print("Total parameters in the model:", total_params)
             return model, train_days, start_time, state["steps"]
 
         if self.config.resume == 'auto' and len(os.listdir(os.path.join(self.output_dir, "models"))) > 0:
@@ -244,6 +252,7 @@ class DiffusionAutoEncodersInterface:
             try:
                 state = torch.load(weight_path)
                 model.load_state_dict(state['model'])
+                ema_model.load_state_dict(state['ema_model'])
             except: # remove "module." from keys (DDP)
                 print("was not able to load state_dict...adapting to ddp")
                 new_state = {}
@@ -252,14 +261,23 @@ class DiffusionAutoEncodersInterface:
                     name = k[7:] # remove `module.`
                     new_state['model'][name] = v
                 model.load_state_dict(new_state['model'])
+                ema_model.load_state_dict(state['ema_model'])
             start_time = time.time() - state['time_elapsed']
             steps = state['steps']
         else:
             train_days = 0
             steps = 0
             start_time = time.time()
+            ema_model = EMA(model, **self.config.trainer.ema)
             print('Training from scratch')
-        return model, train_days, start_time, steps
+
+        total_params = sum(p.numel() for p in model.parameters())
+        print("Total parameters in the model:", total_params)
+
+        total_params = sum(p.numel() for p in ema_model.parameters())
+        print("Total parameters in the model:", total_params)
+
+        return ema_model, model, train_days, start_time, steps
 
 
     def _init_clf_model(self, ckpt_path=None):
@@ -284,8 +302,7 @@ class DiffusionAutoEncodersInterface:
         else:
             self.transforms = get_torchvision_transforms(self.config, 'test')
 
-        # TODO: outsource sbj file
-        ds = UKBB(self.config, sbj_file=self.config.dataset.sbj_file, transforms=self.transforms)
+        ds = UKBB_lmdb(self.config, transforms=self.transforms)
         idxs = list(range(0, len(ds)))
         split_idx = int(len(idxs) * self.config.dataset.train_pct)
 
@@ -311,7 +328,7 @@ class DiffusionAutoEncodersInterface:
             "steps": self.steps
         }
 
-        trainer = Trainer(self.model, self.aekl_model, self.config, self.output_dir, self.train_dataset, self.test_dataset, **add_data)
+        trainer = Trainer(self.ema_model, self.model, self.aekl_model, self.config, self.output_dir, self.train_dataset, self.test_dataset, **add_data)
         if self.config.finetune:
             trainer.train_finetune(self.config.stage)
         else: 
