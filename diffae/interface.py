@@ -227,7 +227,7 @@ class DiffusionAutoEncodersInterface:
             state = torch.load(ckpt_path)
             try:
                 model.load_state_dict(state['model'])
-                ema_model.load_state_dict(state['ema_model'])
+                # ema_model.load_state_dict(state['ema_model'])
             except: # remove "module." from keys (DDP)
                 print("was not able to load state_dict...adapting to ddp")
                 new_state = {}
@@ -236,12 +236,12 @@ class DiffusionAutoEncodersInterface:
                     name = k[7:] # remove `module.`
                     new_state['model'][name] = v
                 model.load_state_dict(new_state['model'])
-                ema_model.load_state_dict(state['ema_model'])
+                # ema_model.load_state_dict(state['ema_model'])
             train_days = int(ckpt_path.split(".")[1])+1 # format is ckpt.X.pt
             start_time = time.time() - state['time_elapsed']
             total_params = sum(p.numel() for p in model.parameters())
             print("Total parameters in the model:", total_params)
-            return model, train_days, start_time, state["steps"]
+            return None, model, train_days, start_time, state["steps"]
 
         if self.config.resume == 'auto' and len(os.listdir(os.path.join(self.output_dir, "models"))) > 0:
             checkpoints = sorted(os.listdir(os.path.join(self.output_dir, "models")))
@@ -275,7 +275,7 @@ class DiffusionAutoEncodersInterface:
         print("Total parameters in the model:", total_params)
 
         total_params = sum(p.numel() for p in ema_model.parameters())
-        print("Total parameters in the model:", total_params)
+        print("Total parameters in the EMA model:", total_params)
 
         return ema_model, model, train_days, start_time, steps
 
@@ -302,12 +302,17 @@ class DiffusionAutoEncodersInterface:
         else:
             self.transforms = get_torchvision_transforms(self.config, 'test')
 
-        ds = UKBB_lmdb(self.config, transforms=self.transforms)
+        ds = UKBB(self.config, transforms=self.transforms)
         idxs = list(range(0, len(ds)))
         split_idx = int(len(idxs) * self.config.dataset.train_pct)
-
         self.train_dataset = Subset(ds, idxs[:split_idx])
         self.test_dataset = Subset(ds, idxs[split_idx:])
+
+        # test_ds = UKBB(self.config, transforms=self.transforms)
+        # idxs = list(range(0, len(test_ds)))
+        # split_idx = int(len(idxs) * self.config.dataset.train_pct)
+        # self.test_dataset = Subset(test_ds, idxs[split_idx:])
+
 
         # elif self.mode == 'clf_train':
         #     image_dataset = get_dataset(name=data_name, split='train', transform=self.transforms)

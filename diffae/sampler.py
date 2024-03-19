@@ -571,7 +571,10 @@ class Sampler:
 
         self.output_dir = self.config.output_dir
         self.num_timesteps = num_timesteps if num_timesteps is not None else self.config.trainer.timestep_sampler.num_sample_steps
-        self.betas = get_betas(config)
+        
+        start = config.trainer.beta.linear.start
+        end = config.trainer.beta.linear.end
+        self.betas = torch.from_numpy(np.linspace(start, end, self.num_timesteps)).type(torch.float)
         self.alphas = 1 - self.betas
         self.alphas_cumprod = self.alphas.cumprod(dim=0).to(self.device)
         self.alphas_cumprod_prev = torch.cat([torch.ones(1, device=self.device), self.alphas_cumprod[:-1]], dim=0)
@@ -581,6 +584,9 @@ class Sampler:
             warnings.simplefilter('ignore')
             self.lpips_fn_alex = lpips.LPIPS(net='alex', verbose=False).to(self.device)
     
+    def _scale_timesteps(self, t):
+        return t * (1000.0 / self.num_timesteps)
+
 
     def equation_twelve(self, xt, e, _t, batch_size, dim, eta=0.0, clamp=True):
          # Equation 12 of Denoising Diffusion Implicit Models
@@ -607,7 +613,7 @@ class Sampler:
         xt = xt + torch.randn_like(xt) * sigma.view((batch_size,)+ (1,) *dim) if torch.nonzero(_t).size(0) > 0 else xt
         return xt
 
-    def sample_interpolated_testdata_batch(self, batch, eta=0.0, metrics=["mse", "psnr", "ssim"], slice_nr='rand'):
+    def sample_interpolated_testdata_batch(self, batch, eta=0.0, metrics=["mse", "psnr", "ssim"], slice_nr='rand', noise=False):
         if slice_nr == "rand":
             slice_nr = np.random.randint(1 , batch[0].shape[2]-1)
         prev, next = slice_nr - 1, slice_nr + 1
@@ -656,8 +662,10 @@ class Sampler:
         for iter, batch in tqdm(enumerate(test_loader), total=len(test_loader)):
             subject, x0_inter, inter, seg_sa, inter_seg, slice_nr = self.sample_interpolated_testdata_batch(batch, **kwargs)
 
-            ref = x0_inter[0,0,...].cpu().numpy()
-            sample = inter[0,0,...].clamp(0,1).cpu().numpy()
+            ref = x0_inter[0,...].cpu().numpy()
+            sample = inter[0,...].cpu().numpy()
+
+            print(ref.min(), ref.max(), sample.min(), sample.max())
 
             mse, psnr, ssim = calculate_metrics(ref, sample, metrics)
             results = [subject, slice_nr, mse, psnr, ssim]
@@ -665,6 +673,7 @@ class Sampler:
             print(results)
             print("saving to: ", self.output_dir)
             # try to safe the gifs
+            ref, sample = unnormalize_zero_to_one(ref), unnormalize_zero_to_one(sample)
 
             ref, sample = ref*255, sample*255
             os.makedirs(os.path.join(self.output_dir, "videos", "interpolation", subject), exist_ok=True)
@@ -676,9 +685,9 @@ class Sampler:
 
         return df
 
-    def sample_testdata_batch(self, batch, eta=0.0, slice_nr="rand"):
+    def sample_testdata_batch(self, batch, eta=0.0, slice_nr="rand", noise=False):
         if slice_nr == "rand":
-            slice_nr = None # np.random.randint(0 , batch[0].shape[2])
+            slice_nr = np.random.randint(0 , batch[0].shape[2])
         x0, _, seg_sa, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=slice_nr)
         gt_x0 = x0.clone().detach()
 
@@ -693,33 +702,17 @@ class Sampler:
         if self.use_latent:
             x0 = self.aekl_model.encode_stage_2_inputs(x0)
 
-        xt = self.encode_stochastic(x0, disable_tqdm=False)
-        # xt = torch.randn_like(x0)
-
+        # xt = self.encode_stochastic(x0, disable_tqdm=False) if not noise else torch.randn_like(x0)
+        xt = torch.randn_like(x0)
         style_emb = self.model.encoder(x0)
 
         for _t in tqdm(reversed(range(self.num_timesteps)), desc="decoding ..."):
-            t = torch.ones(batch_size, dtype=torch.long, device=self.device) * _t
-            t = t.type(torch.long)
+            _t = torch.ones(batch_size, dtype=torch.long, device=self.device) * _t
+            t = self._scale_timesteps(_t).type(torch.long)
 
             e_recon, e_seg = self.model.unet(xt, t, text_embeds=style_emb)
 
-            xt_recon = self.equation_twelve(xt, e_recon, t, batch_size, dim)
-            # xt_recon = self.ddim_sampler(xt, e_recon, t, batch_size, dim)
-            # assert torch.allclose(xt_test, xt_recon), f"difference is {abs(xt_test - xt_recon).mean()}"
-            # if _t % 50 == 0:
-            #     output_dir_path = os.path.join(self.output_dir, "videos", "interpolation")
-            #     if not os.path.exists(output_dir_path):
-            #         os.makedirs(output_dir_path)
-            #     print(xt_recon.shape)
-            #     output_images = xt_recon.cpu().numpy().transpose(0, 2, 3, 1)
-            #     for i in range(batch_size):
-            #         im = output_images[i]
-            #         im = np.clip(im, 0, 1)
-            #         im = (255 * im[:, :, 0]).astype(np.uint8)
-            #         im = cv2.cvtColor(im, cv2.COLOR_GRAY2RGB)
-            #         plt.imsave(os.path.join(output_dir_path, f"recon_{_t}_{i:04d}.png"), im)
-
+            xt_recon = self.equation_twelve(xt, e_recon, _t, batch_size, dim)
 
             xt_seg = None
             if e_seg is not None: 
@@ -754,7 +747,7 @@ class Sampler:
             for i in range(batch_size):
                 ref = x0[i,...].cpu().numpy()
                 sample = xt[i,...].cpu().numpy()
-                subject = "1234567"#extract_seven_concurrent_numbers(fnames[i])[0]
+                subject = extract_seven_concurrent_numbers(fnames[i])[0]
                 mse, psnr, ssim = calculate_metrics(ref, sample, keys[2:])
                 results = [subject, slice_nr, mse, psnr, ssim]
                 print(results)
@@ -827,47 +820,38 @@ class Sampler:
         xt = x0.detach().clone()
         style_emb = self.model.encoder(x0)
         for _t in tqdm(range(self.num_timesteps), disable=disable_tqdm, desc='stochastic encoding...'):
-            t = torch.ones(batch_size, dtype=torch.long, device=self.device) * _t
-            t = t.type(torch.long)
+            _t = torch.ones(batch_size, dtype=torch.long, device=self.device) * _t
+            t = self._scale_timesteps(_t).type(torch.long)
 
             e_recon, _ = self.model.unet(xt, t, text_embeds=style_emb)
             x0_t = (
-                torch.sqrt(1.0 / self.alphas_cumprod[t]).view((batch_size,) + (1,) *dim) * xt
-                - torch.sqrt(1.0 / self.alphas_cumprod[t] - 1).view((batch_size,)  + (1,) *dim) * e_recon
+                torch.sqrt(1.0 / self.alphas_cumprod[_t]).view((batch_size,) + (1,) *dim) * xt
+                - torch.sqrt(1.0 / self.alphas_cumprod[_t] - 1).view((batch_size,)  + (1,) *dim) * e_recon
             )
             if clamp:
                 x0_t = x0_t.clamp(-1, 1)
             # Usually our model outputs epsilon, but we re-derive it
             # in case we used x_start or x_prev prediction. (from original)
             e = (
-                (torch.sqrt(1.0 / self.alphas_cumprod[t]).view((batch_size,) + (1,) *dim) * xt - x0_t)
-                / (torch.sqrt(1.0 / self.alphas_cumprod[t] - 1).view((batch_size,)  + (1,) *dim))
+                (torch.sqrt(1.0 / self.alphas_cumprod[_t]).view((batch_size,) + (1,) *dim) * xt - x0_t)
+                / (torch.sqrt(1.0 / self.alphas_cumprod[_t] - 1).view((batch_size,)  + (1,) *dim))
             )
             xt = (
-                torch.sqrt(self.alphas_cumprod_next[t]).view((batch_size,)  + (1,) *dim) * x0_t
-                + torch.sqrt(1 - self.alphas_cumprod_next[t]).view((batch_size,)  + (1,) *dim)* e
+                torch.sqrt(self.alphas_cumprod_next[_t]).view((batch_size,)  + (1,) *dim) * x0_t
+                + torch.sqrt(1 - self.alphas_cumprod_next[_t]).view((batch_size,)  + (1,) *dim)* e
             )
 
         return xt
 
-    def interpolate(self, xt_1, xt_2, style_emb_1, style_emb_2, alpha, eta=0.0, strat="sphere"):
-        """Interpolation of 2 images.
-        """
+    def cos(self, a, b):
+        a = a.contiguous().view(-1)
+        b = b.contiguous().view(-1)
+        a = torch.nn.functional.normalize(a, dim=0)
+        b = torch.nn.functional.normalize(b, dim=0)
+        return (a * b).sum()
 
-        if len(xt_1.shape) == 4 and len(xt_2.shape) == 4:
-            dim = 3
-        elif len(xt_1.shape) == 5 and len(xt_2.shape) == 5:
-            dim = 4
-        else:
-            print("given dimensions do not match")
-
-        def cos(a, b):
-            a = a.contiguous().view(-1)
-            b = b.contiguous().view(-1)
-            a = torch.nn.functional.normalize(a, dim=0)
-            b = torch.nn.functional.normalize(b, dim=0)
-            return (a * b).sum()
-        theta = torch.arccos(cos(xt_1, xt_2))
+    def interpolate_only(self, xt_1, xt_2, style_emb_1, style_emb_2, alpha, strat="sphere"):
+        theta = torch.arccos(self.cos(xt_1, xt_2))
 
         self.model.eval()
         batch_size = xt_1.shape[0]
@@ -888,22 +872,41 @@ class Sampler:
 
         style_emb = (1 - alpha) * style_emb_1 + alpha * style_emb_2
 
+        return xt, style_emb
+
+
+    def interpolate(self, xt_1, xt_2, style_emb_1, style_emb_2, alpha, eta=0.0, strat="sphere"):
+        """Interpolation of 2 images.
+        """
+
+        if len(xt_1.shape) == 4 and len(xt_2.shape) == 4:
+            dim = 3
+        elif len(xt_1.shape) == 5 and len(xt_2.shape) == 5:
+            dim = 4
+        else:
+            print("given dimensions do not match")
+
+
+        self.model.eval()
+        batch_size = xt_1.shape[0]
+        
+        xt, style_emb = self.interpolate_only(xt_1, xt_2, style_emb_1, style_emb_2, alpha, strat)
+
         x0_preds_recon = []
         xt_preds_recon = []
         x0_preds_seg = []
         xt_preds_seg= []
         # xt, xt0_recon, xt0_seg = self.sample(xt, embeds=style_emb)
         for _t in tqdm(reversed(range(self.num_timesteps)), desc='decoding...', total=self.num_timesteps):
-            t = torch.ones(batch_size, dtype=torch.long, device=self.device) * _t
-            t = t.type(torch.long)
+            _t = torch.ones(batch_size, dtype=torch.long, device=self.device) * _t
+            t = self._scale_timesteps(_t).type(torch.long)
             e_recon, e_seg = self.model.unet(xt, t, text_embeds=style_emb)
-            alphas_shape = self.alphas_cumprod[_t].shape
 
-            xt_recon = self.equation_twelve(xt, e_recon, t, batch_size, dim)
+            xt_recon = self.equation_twelve(xt, e_recon, _t, batch_size, dim)
 
             xt_seg = None
             if e_seg is not None:
-                xt_seg = self.equation_twelve(xt, e_seg, t, batch_size, dim)
+                xt_seg = self.equation_twelve(xt, e_seg, _t, batch_size, dim)
 
             xt_preds_recon.append(xt_recon)
             xt_preds_seg.append(xt_seg)

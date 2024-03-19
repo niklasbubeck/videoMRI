@@ -38,7 +38,7 @@ cascaded:
 trainer:
   fp16: False                                                  # if to use automatic mixec precision
   grad_accum_steps: 1.0                                        # number of steps to accumulate the gradients for 
-  epoch: 1000                                                   # number of epochs 
+  epoch: 2000                                                   # number of epochs 
 
   use_latent_space: False    
   aekl_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/videoMRI/checkpoint.pth"
@@ -47,7 +47,7 @@ trainer:
     clip_grads: 1.0
   
   timestep_sampler:                                            
-    num_sample_steps: 500                                   # number of timesampling steps for the DM encoding/decoding
+    num_sample_steps: 1000                                  # number of timesampling steps for the DM encoding/decoding
     sample: uniform                                            # the way the noise gets sampled 
   
   loss:
@@ -97,7 +97,7 @@ dataset:
   use_seg: False
   cond_slices: [5]
   train_pct: 0.8
-  time_idx: null
+  time_idx: 0
   mode: fcfs
   normalize: True
   crop_along_bbox: False
@@ -132,8 +132,8 @@ checkpoint:
   path: "./outputs/diffusion"
   batch_size: 4
   cond_scale: 5.
-  log_every_x_it: 10
-  save_every_x_it: 10
+  log_every_x_it: 1000
+  save_every_x_it: 1000
 
 seed: 42
 three_d: True

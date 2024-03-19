@@ -27,7 +27,7 @@ encoders:
     num_groups: 8
 
 interpolation: 
-  strat: sphere
+  strat: linear
 
 cascaded: 
   image_sizes: [64, 128]
@@ -47,7 +47,7 @@ trainer:
     clip_grads: 1.0
   
   timestep_sampler:                                            
-    num_sample_steps: 500                                   # number of timesampling steps for the DM encoding/decoding
+    num_sample_steps: 1000                                   # number of timesampling steps for the DM encoding/decoding
     sample: uniform                                            # the way the noise gets sampled 
   
   loss:
@@ -96,7 +96,7 @@ dataset:
   use_seg: False
   cond_slices: [5]
   train_pct: 0.8
-  time_idx: null
+  time_idx: 0
   mode: fcfs
   normalize: True
   crop_along_bbox: False
