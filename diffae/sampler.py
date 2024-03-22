@@ -702,8 +702,7 @@ class Sampler:
         if self.use_latent:
             x0 = self.aekl_model.encode_stage_2_inputs(x0)
 
-        # xt = self.encode_stochastic(x0, disable_tqdm=False) if not noise else torch.randn_like(x0)
-        xt = torch.randn_like(x0)
+        xt = self.encode_stochastic(x0, disable_tqdm=False) if not noise else torch.randn_like(x0)
         style_emb = self.model.encoder(x0)
 
         for _t in tqdm(reversed(range(self.num_timesteps)), desc="decoding ..."):
@@ -713,6 +712,12 @@ class Sampler:
             e_recon, e_seg = self.model.unet(xt, t, text_embeds=style_emb)
 
             xt_recon = self.equation_twelve(xt, e_recon, _t, batch_size, dim)
+            if _t % 10 == 0:
+                output = torch.clamp(xt_recon[0], 0, 1).cpu().detach().permute(1, 2, 0).byte().numpy() 
+                output = output * 255 
+                
+                Image.fromarray(output).save(os.path.join(self.output_dir, "videos", "reconstruction", f"{_t}_recon.png"))
+            
 
             xt_seg = None
             if e_seg is not None: 
@@ -739,7 +744,7 @@ class Sampler:
 
         self.model.eval()
         for iter, batch in tqdm(enumerate(test_loader), total=len(test_loader)):
-            fnames, x0, xt, seg_sa, xt_seg, slice_nr = self.sample_testdata_batch(batch)
+            fnames, x0, xt, seg_sa, xt_seg, slice_nr = self.sample_testdata_batch(batch, noise=True)
             # fnames, gt_x0, xt, seg_sa, xt_seg, slice_nr
             print(x0.shape)
             batch_size = xt.shape[0]

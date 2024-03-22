@@ -54,9 +54,9 @@ def normalize_image_with_mean_lv_value(im: Union[np.ndarray, torch.Tensor], mean
 class UKBB_lmdb(Dataset):
     def __init__(self,
                  config,
-                 path=os.path.expanduser('/vol/aimspace/users/bubeckn/diffae/datasets/ukbb_MedMAE.lmdb'),
                  transforms=None,
                  ):
+        path = os.path.expanduser(config.dataset.data_path)
         self.env = lmdb.open(
             path,
             max_readers=32,
@@ -121,8 +121,8 @@ class UKBB(Dataset):
             subjects = self.read_subject_numbers(sbj_file)
 
         for subject in tqdm(subjects):
-            # if len(self.fnames) >= 500:
-            #     break
+            if len(self.fnames) >= 500:
+                break
             try:
                 self.fnames += glob.glob(f'{self.root_dir}/{subject}/processed_seg_allax.npz', recursive=True) 
                 # self.la_fnames += glob.glob(f'{self.root_dir}/{subject}/la_2ch.nii.gz', recursive=True) 
