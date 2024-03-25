@@ -130,8 +130,8 @@ checkpoint:
   path: "./outputs/diffusion"
   batch_size: 4
   cond_scale: 5.
-  log_every_x_it: 1000
-  save_every_x_it: 1000
+  log_every_x_it: 500
+  save_every_x_it: 500
 
 seed: 42
 three_d: True

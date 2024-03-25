@@ -10,7 +10,7 @@ unets:
     resnet_dropout: 0.1
     attn_resolution: [16, ]
     use_conv_resample: True
-    num_groups: 8
+    num_groups: 32
 
 encoders: 
   encoder1:
@@ -24,7 +24,7 @@ encoders:
     resnet_dropout: 0.1
     attn_resolution: [16, ]
     use_conv_resample: True
-    num_groups: 8
+    num_groups: 32
 
 interpolation: 
   strat: sphere
@@ -37,15 +37,17 @@ cascaded:
 
 trainer:
   fp16: False                                                  # if to use automatic mixec precision
-  grad_accum_steps: 1.0  
-  clip_grad_norm: 1.0                                      # number of steps to accumulate the gradients for 
+  grad_accum_steps: 1.0                                        # number of steps to accumulate the gradients for 
   epoch: 2000                                                   # number of epochs 
 
   use_latent_space: False    
   aekl_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/videoMRI/checkpoint.pth"
 
+  gradient_clipping:                                           # where to gradient clip 
+    clip_grads: 1.0
+  
   timestep_sampler:                                            
-    num_sample_steps: 1000                                  # number of timesampling steps for the DM encoding/decoding
+    num_sample_steps: 100                                  # number of timesampling steps for the DM encoding/decoding
     sample: uniform                                            # the way the noise gets sampled 
   
   loss:
@@ -82,7 +84,7 @@ trainer:
     include_online_model: False
 
 dataset:
-  data_path: "/home/data/datasets/ukbb_MedMAE.lmdb"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
+  data_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/2d_5t_all_64.lmdb"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
   sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
   time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
@@ -104,10 +106,10 @@ dataset:
     transforms:
       - name: RandomHorizontalFlip
         params:
-            p: 0.0
+            p: 0.5
       - name: RandomVerticalFlip
         params:
-            p: 0.0
+            p: 0.5
 
   test: 
     transforms:

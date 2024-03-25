@@ -95,6 +95,8 @@ class UKBB_lmdb(Dataset):
 
             if self.transforms:
                 sa = self.transforms(sa)
+
+        # sa = torch.repeat_interleave(sa, 3, dim=0)
         return {'img': sa, 'index': index}
 
 class UKBB(Dataset):

@@ -34,9 +34,10 @@ class Trainer(torch.nn.Module):
         self.config = config
         self.output_dir = output_dir
         self.train_dataset = train_dataset
-        self.train_loader = DataLoader(self.train_dataset, self.config.bs, num_workers=16)
+        self.train_loader = DataLoader(self.train_dataset, self.config.bs, num_workers=min(self.config.bs, 16), shuffle=True)
         self.test_dataset = test_dataset
-        self.test_loader = DataLoader(self.test_dataset, self.config.bs, num_workers=16, shuffle=False)
+        self.test_loader = DataLoader(self.test_dataset, self.config.bs, num_workers=min(self.config.bs, 16), shuffle=False)
+        self.clip_grad_norm = self.config.trainer.clip_grad_norm
 
         self.use_latent = False
         if self.aekl_model is not None: 
@@ -65,7 +66,7 @@ class Trainer(torch.nn.Module):
         self.prepared = False
          # init accelerator 
         self.accelerator = Accelerator(**{
-            'split_batches': split_batches,
+            'split_batches': False,
             'mixed_precision': 'no',
             'kwargs_handlers': [DistributedDataParallelKwargs(find_unused_parameters = True)], 
             })
@@ -82,6 +83,7 @@ class Trainer(torch.nn.Module):
         self.print(f'Save checkpoint every {self.save_interval} steps')
         self.print(f'Checkpoints are saved in {self.ckpt_dir}')
         if self.is_main: self._init_wandb(config, self.train_days)
+        if self.is_main: wandb.watch(self.model)
 
 
         self.optimizer = self.get_optimizer()
@@ -101,8 +103,6 @@ class Trainer(torch.nn.Module):
 
         self.fp16 = config.trainer.fp16
         self.grad_accum_steps = config.trainer.grad_accum_steps
-
-        self.clip_grad_norm = config.trainer.gradient_clipping.clip_grads
 
         self.num_timesteps = config.trainer.timestep_sampler.num_sample_steps
         self.timestep_sampler = TimestepSampler(config.trainer.timestep_sampler, device=self.device)
@@ -204,6 +204,9 @@ class Trainer(torch.nn.Module):
         if not self.is_main:
             return
         return self.accelerator.print(msg, **kwargs)
+    
+    def wait(self):
+        return self.accelerator.wait_for_everyone()
 
     def _create_tgrad_mask(self, gt_seg, crop_size):
         image_size=(gt_seg.shape[-1], gt_seg.shape[-2])
@@ -338,12 +341,8 @@ class Trainer(torch.nn.Module):
             wandb.log({**metrics, "step": self.steps, "epoch": self.steps // len(self.train_loader), "mvid": self.steps * self.config.bs / 1e6})
 
     def train(self, unet_number=0):
+        self.wait()
         torch.autograd.set_detect_anomaly(True)
-        # state = dict(
-        #     model = self.model.state_dict(),
-        # )
-        # torch.save(state, os.path.join(self.ckpt_dir, "cascaded_model.pt"))
-        # self.scaler = torch.cuda.amp.GradScaler(enabled=self.fp16)
         self.prepare(unet_number)
 
         self.print('Training start ...')
@@ -356,7 +355,7 @@ class Trainer(torch.nn.Module):
             for self.iter, batch in enumerate(tqdm(self.train_loader, disable=self.disable_tqdm)):
                 steps += 1
                 self.optimizer.zero_grad()
-                with torch.cuda.amp.autocast(enabled=self.fp16):
+                with self.accelerator.autocast():
                     random = None #np.random.randint(0 , batch[0].shape[2])
                     sa, _, sa_seg, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random, unet_number=unet_number)
                     sa , idx = batch['img'], batch['index']
@@ -415,6 +414,8 @@ class Trainer(torch.nn.Module):
 
                 if self.is_main: self._one_line_log(steps, loss_recon, loss_seg, len(self.train_loader), self.start_time, additional={"tgrad": grad_t_loss, "learning_rate": self.optimizer.param_groups[0]['lr'], "lr_sched": self.scheduler.get_last_lr()})
                 self.accelerator.backward(loss)
+                if self.clip_grad_norm > 0:
+                    self.accelerator.clip_grad_norm_(self.unet_being_trained.parameters(), self.clip_grad_norm)
                 self.optimizer.step()
                 self.ema_model.update()
         
@@ -459,7 +460,7 @@ class Trainer(torch.nn.Module):
             for self.iter, batch in enumerate(tqdm(self.train_loader, disable=self.disable_tqdm)):
                 steps += 1
                 self.optimizer.zero_grad()
-                with torch.cuda.amp.autocast(enabled=self.fp16):
+                with self.accelerator.autocast():
                     random = np.random.randint(0+1 , batch[0].shape[2]-1)
                     sa_prev, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random - 1, unet_number=unet_number)
                     sa_inter, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random, unet_number=unet_number)
@@ -494,6 +495,8 @@ class Trainer(torch.nn.Module):
                     
                 if self.is_main: self._one_line_log(steps, loss, 0, len(self.train_loader), self.start_time, additional={"learning_rate": self.optimizer.param_groups[0]['lr'], "lr_sched": self.scheduler.get_last_lr()})
                 self.accelerator.backward(loss)
+                if self.clip_grad_norm > 0:
+                    self.accelerator.clip_grad_norm_(self.unet_being_trained.parameters(), self.clip_grad_norm)
                 self.optimizer.step()
                 self.ema_model.update()
         

@@ -19,6 +19,7 @@ import torch.nn as nn
 from .network_blocks import AttentionBlock, Downsample, ResnetBlock2D, SinusoidalPosEmb, Upsample
 
 
+
 class Unet(nn.Module):
     """Unet that output predicted noise
     """

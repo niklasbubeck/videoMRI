@@ -256,8 +256,8 @@ class DiffusionAutoEncoders(BaseModel):
         self.encoder = SemanticEncoder(enc_config)
         self.unet = Unet(unet_config)
 
-    # def preprocess(self, batch, time_res, slice_res, res, cond_slices, slice_idx, time_idx=None, mode="fcfs", normalize=False, **kwargs):
-    #     return batch['img'], None, None, None, "1234567"
+    def preprocess(self, batch, time_res, slice_res, res, cond_slices, slice_idx, time_idx=None, mode="fcfs", normalize=False, **kwargs):
+        return batch['img'], None, None, None, "1234567"
 
 
     def forward(self, x0, xt, t, lowres_cond_img=None, lowres_noise_times=None):
