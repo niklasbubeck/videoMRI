@@ -36,8 +36,10 @@ cascaded:
   text_embed_dim: 512
 
 trainer:
-  fp16: False                                                  # if to use automatic mixec precision
-  grad_accum_steps: 1.0  
+  accelerator:
+    split_batches: False 
+    mixed_precision: "no"                                        # if to use automatic mixec precision
+  
   clip_grad_norm: 1.0                                      # number of steps to accumulate the gradients for 
   epoch: 2000                                                   # number of epochs 
 
@@ -45,7 +47,7 @@ trainer:
   aekl_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/videoMRI/checkpoint.pth"
 
   timestep_sampler:                                            
-    num_sample_steps: 20                                  # number of timesampling steps for the DM encoding/decoding
+    num_sample_steps: 1000                                  # number of timesampling steps for the DM encoding/decoding
     sample: uniform                                            # the way the noise gets sampled 
   
   loss:
@@ -65,6 +67,7 @@ trainer:
     params:
         lr: 0.0001
         weight_decay: 0
+        eps: 1e-4
   
   beta:
     schedule: linear

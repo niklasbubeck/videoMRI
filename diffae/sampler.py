@@ -571,7 +571,7 @@ class Sampler:
 
         self.output_dir = self.config.output_dir
         self.num_timesteps = self.config.trainer.timestep_sampler.num_sample_steps
-        
+        print(f'num_timesteps: {self.num_timesteps}')
         start = config.trainer.beta.linear.start
         end = config.trainer.beta.linear.end
         self.betas = torch.from_numpy(np.linspace(start, end, self.num_timesteps)).type(torch.float)
@@ -582,7 +582,7 @@ class Sampler:
             self.lpips_fn_alex = lpips.LPIPS(net='alex', verbose=False).to(self.device)
     
     def update_betas_and_alphas(self, num_timesteps):
-        new_timesteps = [x for x in range(0, 1001, num_timesteps)]
+        new_timesteps = [x for x in range(0, 1001, 1000//num_timesteps)]
         last_alpha_cumprod = 1.0
         new_betas = []
         for i, alpha_cumprod in enumerate(self.alphas_cumprod):
@@ -592,15 +592,16 @@ class Sampler:
                 last_alpha_cumprod = alpha_cumprod
         
         self.num_timesteps = len(new_betas)
+        print("Number of timesteps: ", self.num_timesteps)
         self.betas = torch.tensor(new_betas, device=self.device).type(torch.float)
         self.alphas, self.alphas_cumprod, self.alphas_cumprod_prev, self.alphas_cumprod_next = self._define_alphas(self.betas)
 
         
     def _define_alphas(self, betas):
         alphas = 1.0 - betas
-        alphas_cumprod = torch.cumprod(self.alphas, dim=0)
-        alphas_cumprod_prev = torch.cat([torch.ones(1, device=self.device), self.alphas_cumprod[:-1]], dim=0)
-        alphas_cumprod_next = torch.cat([self.alphas_cumprod[1:], torch.zeros(1, device=self.device)], dim=0)
+        alphas_cumprod = torch.cumprod(alphas, dim=0).to(self.device)
+        alphas_cumprod_prev = torch.cat([torch.ones(1, device=self.device), alphas_cumprod[:-1]], dim=0)
+        alphas_cumprod_next = torch.cat([alphas_cumprod[1:], torch.zeros(1, device=self.device)], dim=0)
         
         return alphas, alphas_cumprod, alphas_cumprod_prev, alphas_cumprod_next
     

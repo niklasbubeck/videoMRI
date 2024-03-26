@@ -67,8 +67,8 @@ class Trainer(torch.nn.Module):
         self.prepared = False
          # init accelerator 
         self.accelerator = Accelerator(**{
-            'split_batches': False,
-            'mixed_precision': 'no',
+            'split_batches': self.config.trainer.accelerator.split_batches,
+            'mixed_precision': self.config.trainer.accelerator.mixed_precision,
             'kwargs_handlers': [DistributedDataParallelKwargs(find_unused_parameters = True)], 
             })
 
@@ -100,10 +100,6 @@ class Trainer(torch.nn.Module):
         self.criterion_recon = SimpleLoss() if self.config.trainer.loss.recon == "mse" else VideoSSIMLoss()
         self.criterion_seg = SimpleLoss() if self.config.trainer.loss.seg == "mse" else SegmentationCriterion(type="dice")
         self.temp_grad_loss = TemporalGradLoss()
-
-
-        self.fp16 = config.trainer.fp16
-        self.grad_accum_steps = config.trainer.grad_accum_steps
 
         self.num_timesteps = config.trainer.timestep_sampler.num_sample_steps
         self.timestep_sampler = TimestepSampler(config.trainer.timestep_sampler, device=self.device)
@@ -400,7 +396,7 @@ class Trainer(torch.nn.Module):
                             self._vid_or_image_to_wandb(vid_seg/4, "train_seg")
 
                     loss_recon = self.criterion_recon(pred_recon, gt_sa)
-                    
+                    print("loss_recon: ", loss_recon)
                     loss_seg = 0
                     if out_seg is not None:
                         loss_seg, dice_seg = self.criterion_seg(pred_seg, one_hot(sa_seg, num_classes=4), one_hot_enc=False)
