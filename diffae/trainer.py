@@ -10,6 +10,8 @@ import numpy as np
 import random as rand
 from accelerate import Accelerator, DistributedType, DistributedDataParallelKwargs
 from omegaconf import OmegaConf
+from minlora import add_lora, apply_to_lora, disable_lora, enable_lora, get_lora_params, merge_lora, name_is_lora, remove_lora, load_multiple_lora, select_lora
+
 import torch.nn.functional as F
 from monai.networks.utils import one_hot
 from generative.networks.nets import AutoencoderKL
@@ -257,9 +259,10 @@ class Trainer(torch.nn.Module):
             **additional
         })
 
-    def get_optimizer(self):
+    def get_optimizer(self, params=None):
+        params = params if params is not None else self.model.parameters()
         optimizer_cls = getattr(torch.optim, self.config.trainer.optimizer.name)
-        optimizer = optimizer_cls(self.model.parameters(), **self.config.trainer.optimizer.params)
+        optimizer = optimizer_cls(params, **self.config.trainer.optimizer.params)
         return optimizer
     
     def get_scheduler(self, optimizer):
@@ -267,12 +270,12 @@ class Trainer(torch.nn.Module):
         scheduler = scheduler_cls(optimizer, **self.config.trainer.scheduler.params)
         return scheduler
 
-    def prepare(self, unet_number): 
+    def prepare(self, model): 
         if self.prepared: 
             self.print("Trainer alredy prepared,...moving on")
             return 
         else: 
-            self.unet_being_trained, self.train_loader, self.optimizer, self.test_loader = self.accelerator.prepare(self.model, self.train_loader, self.optimizer, self.test_loader)
+            self.unet_being_trained, self.aekl_model, self.train_loader, self.optimizer, self.test_loader = self.accelerator.prepare(model, self.aekl_model, self.train_loader, self.optimizer, self.test_loader)
             self.prepared = True
             return 
 
@@ -341,7 +344,7 @@ class Trainer(torch.nn.Module):
     def train(self, unet_number=0):
         self.wait()
         torch.autograd.set_detect_anomaly(True)
-        self.prepare(unet_number)
+        self.prepare(self.model)
 
         self.print('Training start ...')
         steps = self.steps
@@ -420,12 +423,12 @@ class Trainer(torch.nn.Module):
 
                 
                 if (steps + 1) % self.log_interval == 0 and self.is_main:
+                    self.evalutate_train(self.ema_model.ema_model, mode="reconstruction", num_timesteps=20, noise=False)
                     self.evalutate_train(self.ema_model.ema_model, mode="reconstruction", num_timesteps=50, noise=False)
                     self.evalutate_train(self.ema_model.ema_model, mode="reconstruction", num_timesteps=100, noise=False)
-                    self.evalutate_train(self.ema_model.ema_model, mode="reconstruction", num_timesteps=500, noise=False)
+                    self.evalutate_train(self.ema_model.ema_model, mode="reconstruction", num_timesteps=20, noise=True)
                     self.evalutate_train(self.ema_model.ema_model, mode="reconstruction", num_timesteps=50, noise=True)
                     self.evalutate_train(self.ema_model.ema_model, mode="reconstruction", num_timesteps=100, noise=True)
-                    self.evalutate_train(self.ema_model.ema_model, mode="reconstruction", num_timesteps=500, noise=True)
 
                 if self.is_main:
                     if (steps + 1) % self.save_interval == 0:
@@ -446,8 +449,17 @@ class Trainer(torch.nn.Module):
 
     def train_finetune(self, unet_number=0, fine_tune=True):
         torch.autograd.set_detect_anomaly(True)
-        self.prepare(unet_number)
+        # TODO: Define Lora config and make it addable to conv layers 
+        add_lora(self.model)
+        parameters = [
+            {"params": list(get_lora_params(self.model))},
+        ]
+        self.optimizer = self.get_optimizer(parameters)
+        self.prepare(self.model)
 
+        sampler = Sampler(model=self.model, aekl_model=self.aekl_model, config=self.config, device=self.device)
+        sampler.update_betas_and_alphas(100)
+        
         self.print('Finetune training start ...')
         steps = self.steps
         for self.epoch in range(self.config.trainer.epoch):
@@ -459,36 +471,10 @@ class Trainer(torch.nn.Module):
                 steps += 1
                 self.optimizer.zero_grad()
                 with self.accelerator.autocast():
-                    random = np.random.randint(0+1 , batch[0].shape[2]-1)
-                    sa_prev, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random - 1, unet_number=unet_number)
-                    sa_inter, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random, unet_number=unet_number)
-                    sa_next, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random + 1, unet_number=unet_number)
-                    gt_sa_prev = sa_prev.detach().clone()
-                    gt_sa_inter = sa_inter.detach().clone()
-                    gt_sa_next = sa_next.detach().clone()
 
-                    # handling 3d and 2d view
-                    view = [1 for i in range(len(sa_prev.shape))]
-                    view[0] = -1
+                    subject, x0_inter, inter_recon, seg_sa, inter_seg, slice_nr = sampler.sample_interpolated_testdata_batch(batch)
 
-                    if self.use_latent:
-                        sa_prev = self.aekl_model.encode_stage_2_inputs(sa_prev)
-                        sa_next = self.aekl_model.encode_stage_2_inputs(sa_next)
-
-                    t = self.timestep_sampler.sample(sa_inter.shape[0])
-                    n = torch.randn_like(sa_inter, device=self.device)
-
-                    prev_n, _, _ = self._sample_noise(sa_prev, view ,noise=n, time=t)
-                    next_n, _, _ = self._sample_noise(sa_next, view ,noise=n, time=t)
-
-                    inter_n = (prev_n + next_n) / 2
-                    out_recon, out_seg = self.unet_being_trained(sa_inter, inter_n, t.float())
-
- 
-                    if self.use_latent:
-                        pred_recon = self.aekl_model.decode_stage_2_outputs(pred_recon)
-
-                    loss = self.criterion_recon(out_recon, n)
+                    loss = self.criterion_recon(x0_inter, inter_recon)
                     
                     
                 if self.is_main: self._one_line_log(steps, loss, 0, len(self.train_loader), self.start_time, additional={"learning_rate": self.optimizer.param_groups[0]['lr'], "lr_sched": self.scheduler.get_last_lr()})

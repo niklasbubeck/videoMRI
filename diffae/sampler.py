@@ -657,9 +657,6 @@ class Sampler:
         style_emb_2 = self.model.encoder(x0_next)
 
         inter_recon, inter_seg = self.interpolate(xt_1, xt_2, style_emb_1, style_emb_2, alpha=0.5, eta=eta, strat=self.config.interpolation.strat)
-        # inter_seg = results['output_seg']
-        # if inter_seg is not None: 
-        #     inter_seg = inter_seg.unsqueeze(0)
 
         if self.use_latent:
             inter_recon = self.aekl_model.decode_stage_2_outputs(inter_recon)
