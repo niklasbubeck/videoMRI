@@ -45,7 +45,7 @@ trainer:
   aekl_path: "/vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/videoMRI/checkpoint.pth"
 
   timestep_sampler:                                            
-    num_sample_steps: 1000                                  # number of timesampling steps for the DM encoding/decoding
+    num_sample_steps: 20                                  # number of timesampling steps for the DM encoding/decoding
     sample: uniform                                            # the way the noise gets sampled 
   
   loss:
@@ -130,8 +130,8 @@ checkpoint:
   path: "./outputs/diffusion"
   batch_size: 4
   cond_scale: 5.
-  log_every_x_it: 500
-  save_every_x_it: 500
+  log_every_x_it: 1000
+  save_every_x_it: 1000
 
 seed: 42
 three_d: True

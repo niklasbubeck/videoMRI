@@ -38,6 +38,7 @@ class Trainer(torch.nn.Module):
         self.test_dataset = test_dataset
         self.test_loader = DataLoader(self.test_dataset, self.config.bs, num_workers=min(self.config.bs, 16), shuffle=False)
         self.clip_grad_norm = self.config.trainer.clip_grad_norm
+        print(f"Training with Clip grad norm: {self.clip_grad_norm}")
 
         self.use_latent = False
         if self.aekl_model is not None: 
@@ -283,7 +284,8 @@ class Trainer(torch.nn.Module):
     def evalutate_train(self, model, mode="interpolation", metrics=["mse", "psnr", "ssim"], num_timesteps=1000, noise=False):
         assert mode in ["interpolation", "reconstruction"], f"Given mode is not known: {mode}"
         key_prefix = f"val/{mode}/{num_timesteps}/{noise}"
-        sampler = Sampler(model=model, aekl_model=self.aekl_model, config=self.config, device=self.device, num_timesteps=num_timesteps)
+        sampler = Sampler(model=model, aekl_model=self.aekl_model, config=self.config, device=self.device)
+        sampler.update_betas_and_alphas(num_timesteps)
         fcn = sampler.sample_testdata_batch if mode == "reconstruction" else sampler.sample_interpolated_testdata_batch
 
         mses, psnrs, ssims, gts, dices, dices_1, dices_2, dices_3, samples, gts_seg, samples_seg = [], [], [], [], [], [], [], [], [], [], []

@@ -551,7 +551,7 @@ from .utils import get_betas, calculate_metrics, extract_seven_concurrent_number
 
 
 class Sampler:
-    def __init__(self, model, aekl_model, config, device, num_timesteps=None):
+    def __init__(self, model, aekl_model, config, device):
         """
         Args:
             model: Diffusion Autoencoder model.
@@ -570,19 +570,39 @@ class Sampler:
         self.model.to(self.device)
 
         self.output_dir = self.config.output_dir
-        self.num_timesteps = num_timesteps if num_timesteps is not None else self.config.trainer.timestep_sampler.num_sample_steps
+        self.num_timesteps = self.config.trainer.timestep_sampler.num_sample_steps
         
         start = config.trainer.beta.linear.start
         end = config.trainer.beta.linear.end
         self.betas = torch.from_numpy(np.linspace(start, end, self.num_timesteps)).type(torch.float)
-        self.alphas = 1 - self.betas
-        self.alphas_cumprod = self.alphas.cumprod(dim=0).to(self.device)
-        self.alphas_cumprod_prev = torch.cat([torch.ones(1, device=self.device), self.alphas_cumprod[:-1]], dim=0)
-        self.alphas_cumprod_next = torch.cat([self.alphas_cumprod[1:], torch.zeros(1, device=self.device)], dim=0)
+        self.alphas, self.alphas_cumprod, self.alphas_cumprod_prev, self.alphas_cumprod_next = self._define_alphas(self.betas)
 
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             self.lpips_fn_alex = lpips.LPIPS(net='alex', verbose=False).to(self.device)
+    
+    def update_betas_and_alphas(self, num_timesteps):
+        new_timesteps = [x for x in range(0, 1001, num_timesteps)]
+        last_alpha_cumprod = 1.0
+        new_betas = []
+        for i, alpha_cumprod in enumerate(self.alphas_cumprod):
+            if i in new_timesteps:
+                # getting the new betas of the new timesteps
+                new_betas.append(1 - alpha_cumprod / last_alpha_cumprod)
+                last_alpha_cumprod = alpha_cumprod
+        
+        self.num_timesteps = len(new_betas)
+        self.betas = torch.tensor(new_betas, device=self.device).type(torch.float)
+        self.alphas, self.alphas_cumprod, self.alphas_cumprod_prev, self.alphas_cumprod_next = self._define_alphas(self.betas)
+
+        
+    def _define_alphas(self, betas):
+        alphas = 1.0 - betas
+        alphas_cumprod = torch.cumprod(self.alphas, dim=0)
+        alphas_cumprod_prev = torch.cat([torch.ones(1, device=self.device), self.alphas_cumprod[:-1]], dim=0)
+        alphas_cumprod_next = torch.cat([self.alphas_cumprod[1:], torch.zeros(1, device=self.device)], dim=0)
+        
+        return alphas, alphas_cumprod, alphas_cumprod_prev, alphas_cumprod_next
     
     def _scale_timesteps(self, t):
         return t * (1000.0 / self.num_timesteps)
@@ -687,7 +707,7 @@ class Sampler:
 
     def sample_testdata_batch(self, batch, eta=0.0, slice_nr="rand", noise=False):
         if slice_nr == "rand":
-            slice_nr = np.random.randint(0 , batch[0].shape[2])
+            slice_nr = None #np.random.randint(0 , batch[0].shape[2])
         x0, _, seg_sa, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=slice_nr)
         gt_x0 = x0.clone().detach()
 
@@ -712,11 +732,11 @@ class Sampler:
             e_recon, e_seg = self.model.unet(xt, t, text_embeds=style_emb)
 
             xt_recon = self.equation_twelve(xt, e_recon, _t, batch_size, dim)
-            if _t % 10 == 0:
-                output = torch.clamp(xt_recon[0], 0, 1).cpu().detach().permute(1, 2, 0).byte().numpy() 
-                output = output * 255 
+            # if _t % 10 == 0:
+            #     output = torch.clamp(xt_recon[0], 0, 1).cpu().detach().permute(1, 2, 0).byte().numpy() 
+            #     output = output * 255 
                 
-                Image.fromarray(output).save(os.path.join(self.output_dir, "videos", "reconstruction", f"{_t}_recon.png"))
+            #     Image.fromarray(output).save(os.path.join(self.output_dir, "videos", "reconstruction", f"{_t}_recon.png"))
             
 
             xt_seg = None
@@ -752,7 +772,7 @@ class Sampler:
             for i in range(batch_size):
                 ref = x0[i,...].cpu().numpy()
                 sample = xt[i,...].cpu().numpy()
-                subject = extract_seven_concurrent_numbers(fnames[i])[0]
+                subject = "1234567" #extract_seven_concurrent_numbers(fnames[i])[0]
                 mse, psnr, ssim = calculate_metrics(ref, sample, keys[2:])
                 results = [subject, slice_nr, mse, psnr, ssim]
                 print(results)

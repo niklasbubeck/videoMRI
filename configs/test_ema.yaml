@@ -38,7 +38,7 @@ cascaded:
 trainer:
   fp16: False                                                  # if to use automatic mixec precision
   grad_accum_steps: 1.0  
-  clip_grad_norm: 1.0                                      # number of steps to accumulate the gradients for 
+  clip_grad_norm: 0                                     # number of steps to accumulate the gradients for 
   epoch: 2000                                                   # number of epochs 
 
   use_latent_space: False    
