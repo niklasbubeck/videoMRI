@@ -59,12 +59,7 @@ class DiffusionAutoEncodersInterface:
         # clf_ckpt_path = self.output_dir / 'ckpt' / args['clf_ckpt'] if 'clf_ckpt' in args else None
         # self.clf_model = self._init_clf_model(clf_ckpt_path)
 
-        if self.mode in {'test', 'infer'}:
-            self.sampler = Sampler(self.model, self.aekl_model, self.config, device='cuda')
-            # self.unnormalize = get_torchvision_unnormalize(
-            #     self.cfg['test']['dataset'][-1]['params']['mean'],
-            #     self.cfg['test']['dataset'][-1]['params']['std'],
-            # )
+
 
         self._init_dataset()
 
@@ -349,7 +344,9 @@ class DiffusionAutoEncodersInterface:
         assert self.mode == 'test'
 
         print(f'Evaluation reconstruction start...')
-        result = self.sampler.sample_testdata(self.test_dataset)
+        sampler = Sampler(self.model, self.aekl_model, self.config, device='cuda')
+        sampler.update_betas_and_alphas(20)
+        result = sampler.sample_testdata(self.test_dataset)
         with (self.output_dir / 'test.json').open('w') as fp:
             json.dump(result, fp, indent=4, sort_keys=True)
 
@@ -360,7 +357,9 @@ class DiffusionAutoEncodersInterface:
         assert self.mode == 'test'
 
         print(f'Evaluation interpolation start... with strat {self.config.interpolation.strat}')
-        result = self.sampler.sample_interpolated_testdata(self.test_dataset)
+        sampler = Sampler(self.model, self.aekl_model, self.config, device='cuda')
+        sampler.update_betas_and_alphas(20)
+        result = sampler.sample_interpolated_testdata(self.test_dataset)
         with (self.output_dir / 'test.json').open('w') as fp:
             json.dump(result, fp, indent=4, sort_keys=True)
 

@@ -375,6 +375,7 @@ class Trainer(torch.nn.Module):
                     
 
                     pred_recon = (xt - out_recon * torch.sqrt(1-self.alphas_cumprod[t].view(*view))) / torch.sqrt(self.alphas_cumprod[t].view(*view))
+                    pred_recon = pred_recon.clamp(-1, 1)
 
                     if out_seg is not None:
                         pred_seg = (xt - out_seg * torch.sqrt(1-self.alphas_cumprod[t].view(*view))) / torch.sqrt(self.alphas_cumprod[t].view(*view))
@@ -449,17 +450,12 @@ class Trainer(torch.nn.Module):
 
     def train_finetune(self, unet_number=0, fine_tune=True):
         torch.autograd.set_detect_anomaly(True)
-        # TODO: Define Lora config and make it addable to conv layers 
-        add_lora(self.model)
-        parameters = [
-            {"params": list(get_lora_params(self.model))},
-        ]
-        self.optimizer = self.get_optimizer(parameters)
-        self.prepare(self.model)
+        self.prepare(unet_number)
+        if fine_tune:
+            # Make parameters in the unet not require gradients
+            for param in self.model.unet.parameters():
+                param.requires_grad = False
 
-        sampler = Sampler(model=self.model, aekl_model=self.aekl_model, config=self.config, device=self.device)
-        sampler.update_betas_and_alphas(100)
-        
         self.print('Finetune training start ...')
         steps = self.steps
         for self.epoch in range(self.config.trainer.epoch):
@@ -470,11 +466,35 @@ class Trainer(torch.nn.Module):
             for self.iter, batch in enumerate(tqdm(self.train_loader, disable=self.disable_tqdm)):
                 steps += 1
                 self.optimizer.zero_grad()
-                with self.accelerator.autocast():
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    random = np.random.randint(0+1 , batch[0].shape[2]-1)
+                    sa_prev, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random - 1, unet_number=unet_number)
+                    sa_inter, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random, unet_number=unet_number)
+                    sa_next, _, _, _, fnames = self.model.preprocess(batch, **self.config.dataset, slice_idx=random + 1, unet_number=unet_number)
+                    gt_sa_prev = sa_prev.detach().clone()
+                    gt_sa_inter = sa_inter.detach().clone()
+                    gt_sa_next = sa_next.detach().clone()
 
-                    subject, x0_inter, inter_recon, seg_sa, inter_seg, slice_nr = sampler.sample_interpolated_testdata_batch(batch)
+                    # handling 3d and 2d view
+                    view = [1 for i in range(len(sa_prev.shape))]
+                    view[0] = -1
 
-                    loss = self.criterion_recon(x0_inter, inter_recon)
+                    if self.use_latent:
+                        sa_prev = self.aekl_model.encode_stage_2_inputs(sa_prev)
+                        sa_next = self.aekl_model.encode_stage_2_inputs(sa_next)
+
+                    # interpolate xt from prev and next
+                    with torch.no_grad():
+                        sem_prev = self.model.encoder(sa_prev)
+                        sem_next = self.model.encoder(sa_next)
+
+                    sem_inter = (sem_prev+sem_next) // 2
+
+
+                    if self.use_latent:
+                        pred_recon = self.aekl_model.decode_stage_2_outputs(pred_recon)
+
+                    loss = self.criterion_recon(gt_inter, sem_inter)
                     
                     
                 if self.is_main: self._one_line_log(steps, loss, 0, len(self.train_loader), self.start_time, additional={"learning_rate": self.optimizer.param_groups[0]['lr'], "lr_sched": self.scheduler.get_last_lr()})
@@ -488,7 +508,7 @@ class Trainer(torch.nn.Module):
                 # Udpate the logging stuff 
                 if self.is_main:
                     if (steps + 1) % self.save_interval == 0:
-                        self.evalutate_train(self.ema_model.ema_model, mode="interpolation", num_timesteps=100, noise=False)
+                        self.evalutate_train(self.ema_model.ema_model, mode="interpolation", num_timesteps=5, noise=False)
                 if self.is_main:
                     if (steps + 1) % self.save_interval == 0:
                         additional_data = {
