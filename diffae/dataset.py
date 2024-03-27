@@ -107,7 +107,7 @@ class UKBB(Dataset):
         """
 
         self.target_resolution = config.dataset.get("res", 256)
-        self.root_dir = config.dataset.get("data_path", 256)
+        self.root_dir = config.dataset.get("data_path_finetune", 256)
         self.transforms = transforms
         self.slice_res = config.dataset.get("slice_res", 8)
         self.normalize = config.dataset.get("normalize", False)
@@ -226,7 +226,7 @@ class UKBB(Dataset):
 
     def __getitem__(self, idx):
         
-        process_npy = np.load(self.fnames[idx])
+        process_npy = np.load(self.fnames[idx], allow_pickle=True)
         sa = process_npy['sax'] # [H, W, S, T]
         la = process_npy['lax'] # [H, W, S, T]
         sa_seg = process_npy['seg_sax'] # [H, W, S, T]

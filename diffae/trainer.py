@@ -488,7 +488,7 @@ class Trainer(torch.nn.Module):
                 # Udpate the logging stuff 
                 if self.is_main:
                     if (steps + 1) % self.save_interval == 0:
-                        self.evalutate_train(self.ema_model.ema_model, mode="interpolation", num_timesteps=1000, noise=False)
+                        self.evalutate_train(self.ema_model.ema_model, mode="interpolation", num_timesteps=100, noise=False)
                 if self.is_main:
                     if (steps + 1) % self.save_interval == 0:
                         additional_data = {

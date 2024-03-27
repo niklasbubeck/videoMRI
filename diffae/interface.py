@@ -302,7 +302,10 @@ class DiffusionAutoEncodersInterface:
         else:
             self.transforms = get_torchvision_transforms(self.config, 'test')
 
-        ds = UKBB_lmdb(self.config, transforms=self.transforms)
+        if self.config.finetune: 
+            ds = UKBB(self.config, transforms=self.transforms)
+        else: 
+            ds = UKBB_lmdb(self.config, transforms=self.transforms)
         idxs = list(range(0, len(ds)))
         split_idx = int(len(idxs) * self.config.dataset.train_pct)
         self.train_dataset = Subset(ds, idxs[:split_idx])

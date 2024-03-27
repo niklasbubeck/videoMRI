@@ -85,7 +85,8 @@ trainer:
     include_online_model: False
 
 dataset:
-  data_path: "/home/data/datasets/ukbb_MedMAE.lmdb"  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
+  data_path: /home/data/datasets/ukbb_MedMAE.lmdb  # datapath   /vol/aimspace/projects/ukbb/data/cardiac/cardiac_segmentations/projects/MedMAE
+  data_path_finetune: /home/data/datasets/ukbb_MedMAE
   sbj_file: null #"/vol/aimspace/users/bubeckn/MRIDiffusion/twelve-sliced-subjects.txt"         # file which defines the subjects to train on
   deactivate_cache: False
   time_res: 5 # IMPORTANT CHANGE IN 1SCM: 8fps instead of 32fps
